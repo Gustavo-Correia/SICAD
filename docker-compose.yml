@@ -1,0 +1,88 @@
+service:
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sicad_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+    networks:
+      - sicad_network
+    
+  backend-1:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-1
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    restart: always
+    networks:
+      - sicad_network
+      
+  backend-2:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-2
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    restart: always
+    networks:
+      - sicad_network
+      
+  frontend:
+    build:
+      context: ./frontend
+        dockerfile: Dockerfile
+      container_name: frontend
+      ports:
+        - "3000:3000"
+      restart: always
+      networks:
+        - sicad_network
+    
+  nginx:
+    image: nginx:alpine
+    container_name: load-balancer
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - backend-1
+      - backend-2
+    restart: always
+    networks:
+      - sicad_network
+
+volumes:
+  postgres_data:
+  redis_data: 
+
+networks:
+  sicad_network:
+    driver: bridge
+
