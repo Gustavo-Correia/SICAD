@@ -17,7 +17,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY --from=build /build/target/classes /app/classes
 COPY --from=build /build/target/dependency /app/dependency
 
-EXPOSE 8081
+EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD [ "sh", "-c", "curl -f http://localhost:8081/health || exit 1" ]
 

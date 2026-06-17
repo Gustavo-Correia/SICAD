@@ -18,7 +18,7 @@ COPY --from=build /build/target/dependency /app/dependency
 
 COPY --from=build /build/target/backend-1.0.jar /app/app.jar
 
-EXPOSE 8080
+EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 CMD [ "curl -f http://localhost:8080/health || exit 1" ]
 
