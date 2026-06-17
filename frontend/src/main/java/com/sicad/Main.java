@@ -1,5 +1,6 @@
 package com.sicad;
 
+import com.sicad.Model.ClienteSocket;
 import javafx.application.Application;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -8,127 +9,204 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
-import javafx.scene.image.ImageView;
-import java.net.Socket;
 
 public class Main extends Application {
 
+    private Label meuIdLabel;
     private Label statusLabel;
+
+    private ClienteSocket clienteSocket;
 
     @Override
     public void start(Stage stage) {
 
+        clienteSocket = new ClienteSocket();
+
         VBox root = new VBox(15);
         root.setAlignment(Pos.CENTER);
         root.setPadding(new Insets(30));
+
         root.setStyle("""
-                    -fx-background-color: #0f172a;
+                -fx-background-color: #0f172a;
                 """);
 
-        ImageView logo = new ImageView(
-                new Image(getClass()
-                        .getResourceAsStream("/com/sicad/assets/logo.png")));
+        ImageView logo = null;
 
-        logo.setFitWidth(220);
-        logo.setPreserveRatio(true);
+        try {
 
-        Label meuIdTitulo = new Label("Seu ID");
+            logo = new ImageView(
+                    new Image(
+                            getClass().getResourceAsStream(
+                                    "/com/sicad/assets/logo.png"
+                            )
+                    )
+            );
+
+            logo.setFitWidth(220);
+            logo.setPreserveRatio(true);
+
+        } catch (Exception ignored) {
+        }
+
+        Label meuIdTitulo = new Label("Seu ID SICAD");
+
         meuIdTitulo.setStyle("""
-                    -fx-text-fill: white;
-                    -fx-font-size: 14px;
+                -fx-text-fill: white;
+                -fx-font-size: 14px;
                 """);
 
-        String meuId = gerarId();
+        meuIdLabel = new Label("Conectando...");
 
-        Label meuIdLabel = new Label(meuId);
         meuIdLabel.setStyle("""
-                    -fx-background-color: #1e293b;
-                    -fx-text-fill: #38bdf8;
-                    -fx-padding: 12;
-                    -fx-background-radius: 10;
-                    -fx-font-size: 18px;
-                    -fx-font-weight: bold;
+                -fx-background-color: #1e293b;
+                -fx-text-fill: #38bdf8;
+                -fx-padding: 12;
+                -fx-background-radius: 10;
+                -fx-font-size: 18px;
+                -fx-font-weight: bold;
                 """);
 
-        TextField idField = new TextField();
-        idField.setPromptText("Digite o ID do dispositivo");
-        idField.setMaxWidth(300);
+        Label remotoTitulo = new Label("ID Remoto");
 
-        idField.setStyle("""
-                    -fx-background-color: #1e293b;
-                    -fx-text-fill: white;
-                    -fx-prompt-text-fill: #94a3b8;
-                    -fx-background-radius: 10;
-                    -fx-padding: 12;
-                    -fx-font-size: 14px;
+        remotoTitulo.setStyle("""
+                -fx-text-fill: white;
+                -fx-font-size: 14px;
                 """);
 
-        Button conectarBtn = new Button("Conectar");
+        TextField idRemotoField = new TextField();
+
+        idRemotoField.setPromptText(
+                "Digite o ID do dispositivo"
+        );
+
+        idRemotoField.setMaxWidth(300);
+
+        idRemotoField.setStyle("""
+                -fx-background-color: #1e293b;
+                -fx-text-fill: white;
+                -fx-prompt-text-fill: #94a3b8;
+                -fx-background-radius: 10;
+                -fx-padding: 12;
+                -fx-font-size: 14px;
+                """);
+
+        Button conectarBtn =
+                new Button("Conectar");
 
         conectarBtn.setStyle("""
-                    -fx-background-color: #2563eb;
-                    -fx-text-fill: white;
-                    -fx-font-size: 14px;
-                    -fx-font-weight: bold;
-                    -fx-background-radius: 10;
-                    -fx-padding: 10 25 10 25;
+                -fx-background-color: #2563eb;
+                -fx-text-fill: white;
+                -fx-font-size: 14px;
+                -fx-font-weight: bold;
+                -fx-background-radius: 10;
+                -fx-padding: 10 25 10 25;
                 """);
 
-        statusLabel = new Label("Não conectado");
+        statusLabel = new Label(
+                "Conectando ao servidor..."
+        );
 
         statusLabel.setStyle("""
-                    -fx-text-fill: #cbd5e1;
-                    -fx-font-size: 13px;
+                -fx-text-fill: #cbd5e1;
+                -fx-font-size: 13px;
                 """);
 
         conectarBtn.setOnAction(e -> {
-            String idDestino = idField.getText();
+
+            String idDestino =
+                    idRemotoField.getText().trim();
+
+            if (idDestino.isEmpty()) {
+
+                statusLabel.setText(
+                        "Informe um ID válido."
+                );
+
+                return;
+            }
 
             statusLabel.setText(
-                    "Tentando conectar ao ID: " + idDestino);
+                    "Solicitando conexão para "
+                            + idDestino
+            );
+
+            /*
+            clienteSocket.enviarMensagem(
+                    new Mensagem(
+                            "REQUEST_CONNECTION",
+                            idDestino
+                    )
+            );
+            */
         });
 
+        if (logo != null) {
+            root.getChildren().add(logo);
+        }
+
         root.getChildren().addAll(
-                logo,
                 meuIdTitulo,
                 meuIdLabel,
-                idField,
-                conectarBtn,
-                statusLabel);
 
-        Scene scene = new Scene(root, 500, 650);
+                remotoTitulo,
+                idRemotoField,
+
+                conectarBtn,
+
+                statusLabel
+        );
+
+        Scene scene =
+                new Scene(root, 500, 650);
 
         stage.setTitle("SICAD");
+
         stage.setScene(scene);
+
         stage.show();
+
+        conectarServidor();
     }
 
-    private String gerarId() {
-        return java.util.UUID.randomUUID()
-                .toString()
-                .substring(0, 12)
-                .toUpperCase();
-    }
-
-    private void conectar(String ip, String portaTexto) {
+    private void conectarServidor() {
 
         try {
-            int porta = Integer.parseInt(portaTexto);
 
-            Socket socket = new Socket(ip, porta);
+            boolean conectado =
+                    clienteSocket.conectar();
 
-            statusLabel.setText(
-                    "Conectado em " + ip + ":" + porta);
+            if (conectado) {
 
-            socket.close();
+                statusLabel.setText(
+                        "Conectado ao servidor"
+                );
+
+            } else {
+
+                statusLabel.setText(
+                        "Falha ao conectar"
+                );
+            }
 
         } catch (Exception e) {
 
             statusLabel.setText(
-                    "Erro: " + e.getMessage());
+                    "Erro: " + e.getMessage()
+            );
         }
+    }
+
+    public void atualizarMeuId(String id) {
+
+        meuIdLabel.setText(id);
+    }
+
+    public void atualizarStatus(String status) {
+
+        statusLabel.setText(status);
     }
 
     public static void main(String[] args) {

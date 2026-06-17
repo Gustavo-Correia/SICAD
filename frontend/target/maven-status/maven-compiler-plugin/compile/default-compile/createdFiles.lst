@@ -1,1 +1,4 @@
 com\sicad\Main.class
+com\sicad\Model\ClienteSocket.class
+com\sicad\Model\Mensagem.class
+com\sicad\Model\ServerListener.class
