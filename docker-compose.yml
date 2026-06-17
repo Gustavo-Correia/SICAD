@@ -62,8 +62,6 @@ services:
   nginx:
     image: nginx:alpine
     container_name: load-balancer
-    ports:
-      - "80:80"
     volumes:
       - ./nginx:/etc/nginx
     depends_on:
