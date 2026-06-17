@@ -4,83 +4,46 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.Socket;
+import java.util.function.Consumer;
 
 public class ServerListener extends Thread {
 
-    private final Socket socket;
-    private final BufferedReader in;
+    private Socket socket;
+    private BufferedReader in;
+    private Consumer<String> mensagemCallback;
 
-    public ServerListener(Socket socket) throws IOException {
-
+    public ServerListener(Socket socket) {
         this.socket = socket;
+        try {
+            this.in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream())
+            );
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
-        this.in = new BufferedReader(
-                new InputStreamReader(
-                        socket.getInputStream()
-                )
-        );
+    public void setMensagemCallback(Consumer<String> callback) {
+        this.mensagemCallback = callback;
     }
 
     @Override
     public void run() {
-
         try {
-
-            String linha;
-
-            while ((linha = in.readLine()) != null) {
-
-                Mensagem mensagem =
-                        Mensagem.desserializar(linha);
-
-                processarMensagem(mensagem);
+            String mensagem;
+            while ((mensagem = in.readLine()) != null) {
+                if (mensagemCallback != null) {
+                    mensagemCallback.accept(mensagem);
+                }
             }
-
-        } catch (Exception e) {
-
-            System.out.println(
-                    "Conexão encerrada com o servidor."
-            );
-        }
-    }
-
-    private void processarMensagem(Mensagem mensagem) {
-
-        switch (mensagem.getTipo()) {
-
-            case "WELCOME":
-
-                System.out.println(
-                        "Meu ID: "
-                                + mensagem.getConteudo()
-                );
-
-                break;
-
-            case "REQUEST_CONNECTION":
-
-                System.out.println(
-                        "Pedido de conexão recebido de: "
-                                + mensagem.getConteudo()
-                );
-
-                break;
-
-            case "CONNECTION_ACCEPTED":
-
-                System.out.println(
-                        "Conexão aceita por: "
-                                + mensagem.getConteudo()
-                );
-
-                break;
-
-            default:
-
-                System.out.println(
-                        "Mensagem recebida: "
-                                + mensagem.serializar()
-                );
+        } catch (IOException e) {
+            System.out.println("Conexão encerrada: " + e.getMessage());
+        } finally {
+            try {
+                if (socket != null) socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
     }
 }

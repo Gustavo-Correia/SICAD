@@ -1,6 +1,9 @@
 package com.sicad;
 
+import com.sicad.Model.ClienteSocket;
+import com.sicad.Model.Mensagem;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -16,11 +19,40 @@ import javafx.stage.Stage;
 public class Main extends Application {
 
     private BorderPane root;
+    private ClienteSocket clienteSocket;
+    private Label meuIdLabel;
+    private Label statusLabel;
+    private TextField idRemotoField;
 
     @Override
     public void start(Stage stage) {
         root = new BorderPane();
         root.getStyleClass().add("root");
+
+        // Inicializa o socket e conecta automaticamente
+        clienteSocket = new ClienteSocket();
+        clienteSocket.setServerListener(mensagem -> {
+            Platform.runLater(() -> {
+                String[] partes = mensagem.split("\\|");
+                if (partes.length >= 2) {
+                    String comando = partes[0];
+                    String dados = partes[1];
+                    
+                    switch (comando) {
+                        case "WELCOME":
+                            atualizarMeuId(dados);
+                            atualizarStatus("Conectado - Seu ID: " + dados);
+                            break;
+                        case "CONNECTION_ACCEPTED":
+                            atualizarStatus("Conectado a: " + dados);
+                            break;
+                        case "REQUEST_CONNECTION":
+                            atualizarStatus("Solicitação de conexão de: " + dados);
+                            break;
+                    }
+                }
+            });
+        });
 
         // 1. Sidebar (Left)
         VBox sidebar = createSidebar();
@@ -47,6 +79,34 @@ public class Main extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(700);
         stage.show();
+
+        // Conecta ao servidor após a interface estar pronta
+        conectarServidor();
+    }
+
+    private void conectarServidor() {
+        try {
+            boolean conectado = clienteSocket.conectar();
+            if (conectado) {
+                atualizarStatus("Conectado ao servidor");
+            } else {
+                atualizarStatus("Falha ao conectar");
+            }
+        } catch (Exception e) {
+            atualizarStatus("Erro: " + e.getMessage());
+        }
+    }
+
+    public void atualizarMeuId(String id) {
+        if (meuIdLabel != null) {
+            meuIdLabel.setText(id);
+        }
+    }
+
+    public void atualizarStatus(String status) {
+        if (statusLabel != null) {
+            statusLabel.setText(status);
+        }
     }
 
     private VBox createSidebar() {
@@ -129,9 +189,9 @@ public class Main extends Application {
         HBox statusBox = new HBox(8);
         statusBox.setAlignment(Pos.CENTER);
         Circle statusDot = new Circle(4, Color.web("#10B981"));
-        Label statusText = new Label("Online");
-        statusText.getStyleClass().add("text-secondary");
-        statusBox.getChildren().addAll(statusDot, statusText);
+        statusLabel = new Label("Online");
+        statusLabel.getStyleClass().add("text-secondary");
+        statusBox.getChildren().addAll(statusDot, statusLabel);
 
         header.getChildren().addAll(logo, titles, createSpacer(), themeSelector, statusBox);
         return header;
@@ -209,8 +269,8 @@ public class Main extends Application {
         Label title = new Label("Seu ID");
         title.getStyleClass().add("subtitle");
 
-        Label idLabel = new Label("EC103156-6DC");
-        idLabel.getStyleClass().add("id-label");
+        meuIdLabel = new Label("Conectando...");
+        meuIdLabel.getStyleClass().add("id-label");
 
         HBox actions = new HBox(10);
         actions.setAlignment(Pos.CENTER);
@@ -220,7 +280,7 @@ public class Main extends Application {
         qrBtn.getStyleClass().add("btn-secondary");
         actions.getChildren().addAll(copyBtn, qrBtn);
 
-        card.getChildren().addAll(title, idLabel, actions);
+        card.getChildren().addAll(title, meuIdLabel, actions);
         return card;
     }
 
@@ -232,16 +292,27 @@ public class Main extends Application {
         Label title = new Label("Conectar a outro dispositivo");
         title.getStyleClass().add("subtitle");
 
-        TextField input = new TextField();
-        input.setPromptText("Digite o ID do dispositivo");
-        input.getStyleClass().add("input-modern");
-        input.setMaxWidth(400);
+        idRemotoField = new TextField();
+        idRemotoField.setPromptText("Digite o ID do dispositivo");
+        idRemotoField.getStyleClass().add("input-modern");
+        idRemotoField.setMaxWidth(400);
 
         Button connectBtn = new Button("Conectar");
         connectBtn.getStyleClass().add("btn-primary");
         connectBtn.setPrefWidth(200);
+        connectBtn.setOnAction(e -> {
+            String idDestino = idRemotoField.getText().trim();
+            if (idDestino.isEmpty()) {
+                atualizarStatus("Informe um ID válido.");
+                return;
+            }
+            atualizarStatus("Solicitando conexão para " + idDestino);
+            clienteSocket.enviarMensagem(
+                new Mensagem("REQUEST_CONNECTION", idDestino)
+            );
+        });
 
-        card.getChildren().addAll(title, input, connectBtn);
+        card.getChildren().addAll(title, idRemotoField, connectBtn);
         return card;
     }
 
@@ -291,162 +362,6 @@ public class Main extends Application {
 
         card.getChildren().addAll(titleLbl, valLbl);
         return card;
-    }
-
-    public static void main(String[] args) {
-        launch();
-    }
-}
-
-    private VBox createDashboardContent() {
-        VBox content = new VBox(30);
-        content.setPadding(new Insets(40, 60, 40, 60));
-
-        // 1. Connection Area (ID and Connect)
-        HBox connectionArea = new HBox(40);
-        connectionArea.setAlignment(Pos.TOP_CENTER);
-        
-        VBox myIdCard = createMyIdCard();
-        VBox connectCard = createConnectCard();
-        
-        HBox.setHgrow(myIdCard, Priority.ALWAYS);
-        HBox.setHgrow(connectCard, Priority.ALWAYS);
-        
-        connectionArea.getChildren().addAll(myIdCard, connectCard);
-
-        // 2. Recent Sessions
-        VBox recentsSection = new VBox(15);
-        Label recentsTitle = new Label("Sessões Recentes");
-        recentsTitle.getStyleClass().add("title");
-        recentsTitle.setStyle("-fx-font-size: 18px;");
-
-        FlowPane recentsGrid = new FlowPane(20, 20);
-        recentsGrid.getChildren().addAll(
-            createRecentCard("Notebook Casa", "EC102345", "Ontem", "desktop"),
-            createRecentCard("PC Escritório", "AB987654", "Há 2 horas", "desktop"),
-            createRecentCard("Macbook Pro", "XY123456", "12/06/2026", "desktop"),
-            createRecentCard("Celular Pessoal", "ZW987654", "10/06/2026", "mobile")
-        );
-        recentsSection.getChildren().addAll(recentsTitle, recentsGrid);
-
-        // 3. Info Panel
-        VBox infoSection = new VBox(15);
-        Label infoTitle = new Label("Estatísticas");
-        infoTitle.getStyleClass().add("title");
-        infoTitle.setStyle("-fx-font-size: 18px;");
-
-        HBox statsGrid = new HBox(20);
-        statsGrid.getChildren().addAll(
-            createStatCard("Conexões Hoje", "12"),
-            createStatCard("Dispositivos", "25"),
-            createStatCard("Último Acesso", "Hoje 14:32")
-        );
-        infoSection.getChildren().addAll(infoTitle, statsGrid);
-
-        content.getChildren().addAll(connectionArea, recentsSection, infoSection);
-        return content;
-    }
-
-    private VBox createMyIdCard() {
-        VBox card = new VBox(15);
-        card.getStyleClass().add("card");
-        card.setAlignment(Pos.CENTER);
-
-        Label title = new Label("Seu ID");
-        title.getStyleClass().add("subtitle");
-
-        Label idLabel = new Label("EC103156-6DC");
-        idLabel.getStyleClass().add("id-label");
-
-        HBox actions = new HBox(10);
-        actions.setAlignment(Pos.CENTER);
-        Button copyBtn = new Button("Copiar");
-        copyBtn.getStyleClass().add("btn-secondary");
-        Button qrBtn = new Button("QR Code");
-        qrBtn.getStyleClass().add("btn-secondary");
-        actions.getChildren().addAll(copyBtn, qrBtn);
-
-        card.getChildren().addAll(title, idLabel, actions);
-        return card;
-    }
-
-    private VBox createConnectCard() {
-        VBox card = new VBox(15);
-        card.getStyleClass().add("card");
-        card.setAlignment(Pos.CENTER);
-
-        Label title = new Label("Conectar a outro dispositivo");
-        title.getStyleClass().add("subtitle");
-
-        TextField input = new TextField();
-        input.setPromptText("Digite o ID do dispositivo");
-        input.getStyleClass().add("input-modern");
-        input.setMaxWidth(400);
-
-        Button connectBtn = new Button("Conectar");
-        connectBtn.getStyleClass().add("btn-primary");
-        connectBtn.setPrefWidth(200);
-
-        card.getChildren().addAll(title, input, connectBtn);
-        return card;
-    }
-
-    private VBox createRecentCard(String name, String id, String time, String type) {
-        VBox card = new VBox(8);
-        card.getStyleClass().add("session-card");
-        card.setPrefWidth(240);
-
-        String monitorSvg = "M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z";
-        String phoneSvg = "M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z";
-        
-        SVGPath icon = new SVGPath();
-        icon.setContent(type.equals("mobile") ? phoneSvg : monitorSvg);
-        icon.setFill(Color.web("#A9B4D0"));
-
-        HBox header = new HBox(10);
-        header.setAlignment(Pos.CENTER_LEFT);
-        Label nameLbl = new Label(name);
-        nameLbl.getStyleClass().add("text-primary");
-        nameLbl.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
-        header.getChildren().addAll(icon, nameLbl);
-
-        Label idLbl = new Label(id);
-        idLbl.getStyleClass().add("text-primary");
-        idLbl.setStyle("-fx-font-family: 'Consolas'; -fx-font-size: 14px;");
-
-        Label timeLbl = new Label(time);
-        timeLbl.getStyleClass().add("text-secondary");
-        timeLbl.setStyle("-fx-font-size: 12px;");
-
-        card.getChildren().addAll(header, idLbl, timeLbl);
-        return card;
-    }
-
-    private VBox createStatCard(String title, String value) {
-        VBox card = new VBox(5);
-        card.getStyleClass().add("session-card"); // reusing simple card style
-        card.setPrefWidth(200);
-        card.setAlignment(Pos.CENTER);
-
-        Label titleLbl = new Label(title);
-        titleLbl.getStyleClass().add("text-secondary");
-
-        Label valLbl = new Label(value);
-        valLbl.getStyleClass().add("text-primary");
-        valLbl.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
-
-        card.getChildren().addAll(titleLbl, valLbl);
-        return card;
-    }
-
-    public void atualizarMeuId(String id) {
-
-        meuIdLabel.setText(id);
-    }
-
-    public void atualizarStatus(String status) {
-
-        statusLabel.setText(status);
     }
 
     public static void main(String[] args) {
