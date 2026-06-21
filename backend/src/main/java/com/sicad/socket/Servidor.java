@@ -1,5 +1,6 @@
 package com.sicad.socket;
 
+import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -16,13 +17,16 @@ public class Servidor {
 
                 System.out.println(
                     "Cliente conectado: "
-                    + cliente.getInetAddress().getHostAddress()
+                    + cliente.getRemoteSocketAddress()
                 );
 
+                OutputStream out = cliente.getOutputStream();
+
+                out.write("Conexão TCP aceita pelo Balanceador!\n".getBytes());
+                out.flush();
+
                 cliente.close();
-                servidor.close();
             }
-          
         } catch (Exception e) {
             e.printStackTrace();
         }

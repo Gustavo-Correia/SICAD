@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: postgres
     environment:
       POSTGRES_USER: ${DB_USER}
@@ -29,6 +29,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: backend-1
+    ports:
+      - '5001:5000'
     depends_on:
       - postgres
       - redis
@@ -41,6 +43,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: backend-2
+    ports:
+      - '5002:5000'
     depends_on:
       - postgres
       - redis
@@ -48,35 +52,24 @@ services:
     networks:
       - sicad_network
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: frontend
+  nginx:
+    image: nginx:alpine
     ports:
-      - "3000:3000"
+      - "8080:8080"
+    container_name: load-balancer
+    depends_on:
+      - backend-1
+      - backend-2
     restart: always
     networks:
       - sicad_network
 
-  nginx:
-    image: nginx:alpine
-    container_name: load-balancer
-    volumes:
-      - ./nginx:/etc/nginx
-    depends_on:
-      - backend-1
-      - backend-2
-      - frontend
-    restart: always
-    networks:
-      - sicad_network
 
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflare_tunnel
     restart: unless-stopped
-    command: tunnel run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
       - nginx
     networks:
