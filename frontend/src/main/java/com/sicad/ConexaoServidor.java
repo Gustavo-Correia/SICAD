@@ -18,7 +18,7 @@ public class ConexaoServidor {
     {
         new Thread(() -> {
             try {
-                this.socket = new Socket("localhost", 9000);
+                this.socket = new Socket("localhost", 8080);
                 this.conectado = true;
 
                 System.out.println("Conenctado com sucesso ao Túnel TCP!");
