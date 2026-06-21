@@ -12,10 +12,13 @@ import javafx.scene.shape.SVGPath;
 import javafx.scene.shape.Circle;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
-
+    
 public class Main extends Application {
 
     private BorderPane root;
+    private ConexaoServidor conexaoServidor;
+    private Circle statusDot;
+    private Label statusText;
 
     @Override
     public void start(Stage stage) {
@@ -47,6 +50,29 @@ public class Main extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(700);
         stage.show();
+
+        this.conexaoServidor = new ConexaoServidor(this);
+        this.conexaoServidor.conectarServidor();
+    }
+
+    @Override
+    public void stop() throws Exception {
+        if (conexaoServidor != null) {
+            conexaoServidor.desconectarServidor();
+        }
+        super.stop();
+    } 
+
+    public void atualizarStatusConexao(boolean conectado) {
+        if (statusDot != null && statusText != null) {
+            if (conectado) {
+                statusDot.setFill(Color.web("#10B981"));
+                statusText.setText("Online");
+            } else {
+                statusDot.setFill(Color.web("#EF4444"));
+                statusText.setText("Offline");
+            }
+        }
     }
 
     private VBox createSidebar() {
@@ -128,8 +154,9 @@ public class Main extends Application {
         // Status Indicator
         HBox statusBox = new HBox(8);
         statusBox.setAlignment(Pos.CENTER);
-        Circle statusDot = new Circle(4, Color.web("#10B981"));
-        Label statusText = new Label("Online");
+
+        statusDot = new Circle(4, Color.web("#10B981"));
+        statusText = new Label("Conectado");
         statusText.getStyleClass().add("text-secondary");
         statusBox.getChildren().addAll(statusDot, statusText);
 
