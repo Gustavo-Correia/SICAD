@@ -1,1 +1,9 @@
 .env
+frontend/target/classes
+frontend/target/generated-sources
+frontend/target/maven-status
+
+backend/target/classes
+backend/target/maven-status
+backend/target/maven-archiver
+backend/target/test-classes
