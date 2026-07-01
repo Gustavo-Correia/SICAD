@@ -14,15 +14,14 @@ public class ConexaoServidor {
         this.mainApp = mainApp;
     }
 
-    public void conectarServidor()
-    {
+    public void conectarServidor() {
         new Thread(() -> {
             try {
-                this.socket = new Socket("localhost", 8080);
+                this.socket = new Socket("ssh.felipesilva.tec.br", 8080);
                 this.conectado = true;
 
                 System.out.println("Conenctado com sucesso ao Túnel TCP!");
-                
+
                 Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
 
                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -32,11 +31,11 @@ public class ConexaoServidor {
 
                     System.out.println("Mensagem recebida do servidor: " + mensagem);
 
-                    Platform.runLater(() ->{
+                    Platform.runLater(() -> {
                         // mainApp.adicionarMensagem(mensagem);
                     });
                 }
-                
+
             } catch (Exception e) {
                 System.out.println("Erro ao conectar ao Túnel TCP: " + e.getMessage());
                 Platform.runLater(() -> mainApp.atualizarStatusConexao(false));

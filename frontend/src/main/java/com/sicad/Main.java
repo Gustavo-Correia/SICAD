@@ -1,6 +1,7 @@
 package com.sicad;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -19,6 +20,7 @@ public class Main extends Application {
     private ConexaoServidor conexaoServidor;
     private Circle statusDot;
     private Label statusText;
+    private Label idLabel;
 
     @Override
     public void start(Stage stage) {
@@ -53,6 +55,9 @@ public class Main extends Application {
 
         this.conexaoServidor = new ConexaoServidor(this);
         this.conexaoServidor.conectarServidor();
+
+        // Iniciar verificação/geração de ID em background
+        inicializarID();
     }
 
     @Override
@@ -73,6 +78,32 @@ public class Main extends Application {
                 statusText.setText("Offline");
             }
         }
+    }
+
+    /**
+     * Atualiza o label do ID na tela.
+     */
+    public void atualizarID(String id) {
+        if (idLabel != null) {
+            idLabel.setText(id);
+        }
+    }
+
+    /**
+     * Inicializa o ID da máquina:
+     * 1. Consulta o servidor usando o IP local
+     * 2. Se não encontrar, gera um novo ID e registra
+     * 3. Atualiza o label na UI
+     */
+    private void inicializarID() {
+        new Thread(() -> {
+            GerenciadorID gerenciador = new GerenciadorID("ssh.felipesilva.tec.br", 8080);
+            String id = gerenciador.obterOuCriarID();
+
+            Platform.runLater(() -> {
+                atualizarID(id);
+            });
+        }).start();
     }
 
     private VBox createSidebar() {
@@ -236,13 +267,19 @@ public class Main extends Application {
         Label title = new Label("Seu ID");
         title.getStyleClass().add("subtitle");
 
-        Label idLabel = new Label("EC103156-6DC");
+        idLabel = new Label("Carregando...");
         idLabel.getStyleClass().add("id-label");
 
         HBox actions = new HBox(10);
         actions.setAlignment(Pos.CENTER);
         Button copyBtn = new Button("Copiar");
         copyBtn.getStyleClass().add("btn-secondary");
+        copyBtn.setOnAction(e -> {
+            javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+            javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+            content.putString(idLabel.getText());
+            clipboard.setContent(content);
+        });
         Button qrBtn = new Button("QR Code");
         qrBtn.getStyleClass().add("btn-secondary");
         actions.getChildren().addAll(copyBtn, qrBtn);
