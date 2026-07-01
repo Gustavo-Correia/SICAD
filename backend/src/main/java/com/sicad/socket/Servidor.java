@@ -1,117 +1,28 @@
 package com.sicad.socket;
 
-import com.sicad.database.ClientService;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class Servidor {
 
-    public static void main(String[] args) {
-        try {
-            ServerSocket servidor = new ServerSocket(5000);
+    private static final int PORTA = 5000;
 
-            System.out.println("Servidor iniciado na porta 5000");
+    public static void main(String[] args) {
+        ExecutorService pool = Executors.newCachedThreadPool();
+
+        try (ServerSocket servidor = new ServerSocket(PORTA)) {
+            System.out.println("Servidor iniciado na porta " + PORTA);
 
             while (true) {
                 Socket cliente = servidor.accept();
-
-                InetSocketAddress remote = (InetSocketAddress) cliente.getRemoteSocketAddress();
-                String clientIp = remote.getAddress().getHostAddress();
-
-                System.out.println("Cliente conectado: " + remote);
-
-                try (
-                    BufferedReader in = new BufferedReader(new InputStreamReader(cliente.getInputStream()));
-                    OutputStream out = cliente.getOutputStream()
-                ) {
-                    String line = in.readLine();
-
-                    if (line == null) {
-                        cliente.close();
-                        continue;
-                    }
-
-                    String[] parts = line.trim().split(":", 3);
-
-                    if (parts.length < 2) {
-                        out.write("COMANDO INVALIDO\n".getBytes());
-                        out.flush();
-                        cliente.close();
-                        continue;
-                    }
-
-                    String comando = parts[0].toUpperCase();
-
-                    switch (comando) {
-
-                        case "REGISTER":
-                            String clientId = parts[1];
-                            String ip = clientIp;
-
-                            if (parts.length >= 3 && !parts[2].isBlank()) {
-                                ip = parts[2];
-                            }
-
-                            ClientService.registerClient(clientId, ip);
-                            System.out.println("Registrado: " + clientId + " -> " + ip);
-                            out.write(("OK:" + clientId + "\n").getBytes());
-                            break;
-
-                        // Frontend envia: REGISTER_ID:<ip>:<id>
-                        case "REGISTER_ID":
-                            String regIp = parts[1];
-                            String regId = parts.length >= 3 ? parts[2] : null;
-
-                            if (regId == null || regId.isBlank()) {
-                                out.write("ERRO:ID obrigatório\n".getBytes());
-                                break;
-                            }
-
-                            ClientService.registerClient(regId, regIp);
-                            System.out.println("Registrado: " + regId + " -> " + regIp);
-                            out.write("OK\n".getBytes());
-                            break;
-
-                        // Frontend envia: GET_ID:<ip>
-                        case "GET_ID":
-                            String queryIp = parts[1];
-                            String foundId = ClientService.getClientIdByIp(queryIp);
-
-                            if (foundId != null) {
-                                out.write(("ID:" + foundId + "\n").getBytes());
-                            } else {
-                                out.write("NOT_FOUND\n".getBytes());
-                            }
-                            break;
-
-                        case "LOOKUP":
-                            clientId = parts[1];
-                            String storedIp = ClientService.getClientIp(clientId);
-
-                            if (storedIp != null) {
-                                out.write(("IP:" + storedIp + "\n").getBytes());
-                            } else {
-                                out.write("NOT_FOUND\n".getBytes());
-                            }
-                            break;
-
-                        default:
-                            out.write("COMANDO INVALIDO\n".getBytes());
-                            break;
-                    }
-
-                    out.flush();
-                }
-
-                cliente.close();
+                pool.execute(new ClientHandler(cliente));
             }
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            pool.shutdown();
         }
     }
 }

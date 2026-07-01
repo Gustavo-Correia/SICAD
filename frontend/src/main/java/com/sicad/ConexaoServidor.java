@@ -1,46 +1,100 @@
 package com.sicad;
 
-import java.net.Socket;
-import java.io.InputStreamReader;
 import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.Socket;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import javafx.application.Platform;
 
 public class ConexaoServidor {
-    private Main mainApp;
+
+    private final Main mainApp;
     private Socket socket;
+    private BufferedReader in;
+    private OutputStream out;
     private volatile boolean conectado = false;
 
     private ScheduledExecutorService heartbeatScheduler;
     private ScheduledFuture<?> heartbeatTask;
 
+    private final BlockingQueue<String> respostas = new LinkedBlockingQueue<>();
+    private final ReentrantLock comandoLock = new ReentrantLock();
+
     private static final int HEARTBEAT_INTERVALO_SEGUNDOS = 5;
-    private static final int HEARTBEAT_TIMEOUT_MS = 3000;
+    private static final int RESPOSTA_TIMEOUT_SEGUNDOS = 10;
 
     public ConexaoServidor(Main mainApp) {
         this.mainApp = mainApp;
     }
 
-    /**
-     * Verifica se o socket está realmente ativo tentando enviar um byte urgente.
-     * socket.isConnected() em Java não detecta quedas de conexão, por isso usamos
-     * sendUrgentData() — se o servidor caiu, isso lança IOException.
-     */
     public boolean isConectado() {
-        if (!conectado || socket == null || socket.isClosed()) {
-            return false;
+        return conectado;
+    }
+
+    public void conectarServidor(String host, int porta) {
+        new Thread(() -> {
+            try {
+                this.socket = new Socket(host, porta);
+                this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                this.out = socket.getOutputStream();
+                this.conectado = true;
+
+                System.out.println("Conectado com sucesso ao servidor TCP!");
+                Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
+
+                iniciarHeartbeat();
+
+                // Loop de leitura — roda até o servidor fechar a conexão
+                String linha;
+                while (conectado && (linha = in.readLine()) != null) {
+                    String mensagem = linha.trim();
+
+                    if ("PONG".equals(mensagem)) {
+                        // Resposta do heartbeat, não precisa processar
+                        continue;
+                    }
+
+                    // Coloca na fila para quem está esperando resposta de comando
+                    respostas.put(mensagem);
+                }
+
+                System.out.println("Conexão com o servidor foi encerrada.");
+
+            } catch (Exception e) {
+                System.out.println("Erro na conexão TCP: " + e.getMessage());
+            } finally {
+                desconectarServidor();
+            }
+        }, "conexao-servidor").start();
+    }
+
+    /**
+     * Envia um comando e aguarda a resposta do servidor.
+     * Thread-safe: apenas um comando por vez.
+     */
+    public String enviarComando(String comando) {
+        if (!conectado) {
+            return null;
         }
+
+        comandoLock.lock();
         try {
-            socket.setSoTimeout(HEARTBEAT_TIMEOUT_MS);
-            socket.sendUrgentData(0xFF); // tenta escrever no socket para detectar queda
-            return true;
+            respostas.clear();
+            out.write((comando + "\n").getBytes());
+            out.flush();
+            return respostas.poll(RESPOSTA_TIMEOUT_SEGUNDOS, TimeUnit.SECONDS);
         } catch (Exception e) {
-            System.out.println("Heartbeat falhou — conexão perdida: " + e.getMessage());
-            return false;
+            System.out.println("Erro ao enviar comando: " + e.getMessage());
+            return null;
+        } finally {
+            comandoLock.unlock();
         }
     }
 
@@ -52,11 +106,15 @@ public class ConexaoServidor {
         });
 
         heartbeatTask = heartbeatScheduler.scheduleAtFixedRate(() -> {
-            if (!isConectado()) {
-                System.out.println("Heartbeat: servidor inacessível. Encerrando conexão.");
+            if (!conectado || socket == null || socket.isClosed()) {
+                return;
+            }
+            try {
+                out.write("PING\n".getBytes());
+                out.flush();
+            } catch (Exception e) {
+                System.out.println("Heartbeat falhou: " + e.getMessage());
                 desconectarServidor();
-            } else {
-                System.out.println("Heartbeat: servidor OK.");
             }
         }, HEARTBEAT_INTERVALO_SEGUNDOS, HEARTBEAT_INTERVALO_SEGUNDOS, TimeUnit.SECONDS);
     }
@@ -70,41 +128,9 @@ public class ConexaoServidor {
         }
     }
 
-    public void conectarServidor() {
-        new Thread(() -> {
-            try {
-                this.socket = new Socket("10.50.178.133", 8080);
-                this.conectado = true;
-
-                System.out.println("Conectado com sucesso ao Túnel TCP!");
-                Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
-
-                iniciarHeartbeat();
-
-                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                String resposta;
-                while (conectado && (resposta = in.readLine()) != null) {
-                    String mensagem = resposta.trim();
-                    System.out.println("Mensagem recebida do servidor: " + mensagem);
-
-                    Platform.runLater(() -> {
-                        // mainApp.adicionarMensagem(mensagem);
-                    });
-                }
-
-                System.out.println("Conexão com o servidor foi encerrada.");
-
-            } catch (Exception e) {
-                System.out.println("Erro ao conectar ao Túnel TCP: " + e.getMessage());
-            } finally {
-                desconectarServidor();
-            }
-        }).start();
-    }
-
     public void desconectarServidor() {
         if (!conectado && (socket == null || socket.isClosed())) {
-            return; // já desconectado
+            return;
         }
         try {
             this.conectado = false;
@@ -112,11 +138,10 @@ public class ConexaoServidor {
             if (socket != null && !socket.isClosed()) {
                 socket.close();
             }
-            System.out.println("Desconectado do Túnel TCP.");
+            System.out.println("Desconectado do servidor TCP.");
             Platform.runLater(() -> mainApp.atualizarStatusConexao(false));
         } catch (Exception e) {
-            System.out.println("Erro ao desconectar do Túnel TCP: " + e.getMessage());
+            System.out.println("Erro ao desconectar: " + e.getMessage());
         }
     }
-
 }

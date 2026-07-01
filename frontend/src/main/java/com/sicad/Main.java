@@ -52,11 +52,10 @@ public class Main extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(700);
         stage.show();
-
         this.conexaoServidor = new ConexaoServidor(this);
-        this.conexaoServidor.conectarServidor();
+        this.conexaoServidor.conectarServidor("localhost", 5000);
 
-        // Iniciar verificação/geração de ID em background
+        // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
     }
 
@@ -81,7 +80,7 @@ public class Main extends Application {
     }
 
     /**
-     * Atualiza o label do ID na tela.
+     * Atualiza o label de ID na tela principal.
      */
     public void atualizarID(String id) {
         if (idLabel != null) {
@@ -91,19 +90,32 @@ public class Main extends Application {
 
     /**
      * Inicializa o ID da máquina:
-     * 1. Consulta o servidor usando o IP local
-     * 2. Se não encontrar, gera um novo ID e registra
-     * 3. Atualiza o label na UI
+     * 1. Aguarda a conexão com o servidor ficar pronta
+     * 2. Consulta o servidor usando o IP local
+     * 3. Se não encontrar, gera um novo ID e registra
+     * 4. Atualiza o label na UI
      */
     private void inicializarID() {
         new Thread(() -> {
-            GerenciadorID gerenciador = new GerenciadorID("localhost", 5000);
+            // Espera a conexão ficar pronta (máx ~5s)
+            int tentativas = 0;
+            while (!conexaoServidor.isConectado() && tentativas < 20) {
+                try { Thread.sleep(250); } catch (InterruptedException e) { break; }
+                tentativas++;
+            }
+
+            if (!conexaoServidor.isConectado()) {
+                System.out.println("Não foi possível conectar ao servidor para obter ID.");
+                return;
+            }
+
+            GerenciadorID gerenciador = new GerenciadorID(conexaoServidor);
             String id = gerenciador.obterOuCriarID();
 
             Platform.runLater(() -> {
                 atualizarID(id);
             });
-        }).start();
+        }, "inicializar-id").start();
     }
 
     private VBox createSidebar() {
