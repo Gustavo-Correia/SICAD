@@ -97,7 +97,7 @@ public class Main extends Application {
      */
     private void inicializarID() {
         new Thread(() -> {
-            GerenciadorID gerenciador = new GerenciadorID("ssh.felipesilva.tec.br", 8080);
+            GerenciadorID gerenciador = new GerenciadorID("localhost", 5000);
             String id = gerenciador.obterOuCriarID();
 
             Platform.runLater(() -> {

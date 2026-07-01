@@ -73,7 +73,7 @@ public class ConexaoServidor {
     public void conectarServidor() {
         new Thread(() -> {
             try {
-                this.socket = new Socket("ssh.felipesilva.tec.br", 8080);
+                this.socket = new Socket("10.50.178.133", 8080);
                 this.conectado = true;
 
                 System.out.println("Conectado com sucesso ao Túnel TCP!");

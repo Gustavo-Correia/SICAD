@@ -62,6 +62,33 @@ public class Servidor {
                             out.write(("OK:" + clientId + "\n").getBytes());
                             break;
 
+                        // Frontend envia: REGISTER_ID:<ip>:<id>
+                        case "REGISTER_ID":
+                            String regIp = parts[1];
+                            String regId = parts.length >= 3 ? parts[2] : null;
+
+                            if (regId == null || regId.isBlank()) {
+                                out.write("ERRO:ID obrigatório\n".getBytes());
+                                break;
+                            }
+
+                            ClientService.registerClient(regId, regIp);
+                            System.out.println("Registrado: " + regId + " -> " + regIp);
+                            out.write("OK\n".getBytes());
+                            break;
+
+                        // Frontend envia: GET_ID:<ip>
+                        case "GET_ID":
+                            String queryIp = parts[1];
+                            String foundId = ClientService.getClientIdByIp(queryIp);
+
+                            if (foundId != null) {
+                                out.write(("ID:" + foundId + "\n").getBytes());
+                            } else {
+                                out.write("NOT_FOUND\n".getBytes());
+                            }
+                            break;
+
                         case "LOOKUP":
                             clientId = parts[1];
                             String storedIp = ClientService.getClientIp(clientId);

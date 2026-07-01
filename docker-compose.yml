@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: postgres
+    restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -16,11 +17,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
+    restart: always
     ports:
-      - "6379:6379"
+      - "6380:6380"
     volumes:
       - redis_data:/data
-    restart: always
     networks:
       - sicad_network
 
@@ -29,12 +30,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: backend-1
-    ports:
-      - '5001:5000'
+    restart: always
     depends_on:
       - postgres
       - redis
-    restart: always
+    ports:
+      - "5001:5000"
     networks:
       - sicad_network
 
@@ -43,27 +44,26 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: backend-2
-    ports:
-      - '5002:5000'
+    restart: always
     depends_on:
       - postgres
       - redis
-    restart: always
+    ports:
+      - "5002:5000"
     networks:
       - sicad_network
 
   nginx:
     image: nginx:alpine
-    ports:
-      - "8080:8080"
     container_name: load-balancer
+    restart: always
     depends_on:
       - backend-1
       - backend-2
-    restart: always
+    ports:
+      - "8080:8080"
     networks:
       - sicad_network
-
 
   cloudflared:
     image: cloudflare/cloudflared:latest
