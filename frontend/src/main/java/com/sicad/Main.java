@@ -1,5 +1,11 @@
 package com.sicad;
 
+import java.io.FileOutputStream;
+import java.io.PrintStream;
+
+import com.sun.jna.Native;
+import com.sun.jna.win32.StdCallLibrary;
+
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -17,7 +23,15 @@ import javafx.stage.Stage;
 import com.sicad.remote.RemoteDesktopServer;
 import com.sicad.remote.RemoteDesktopClient;
 
+interface Kernel32 extends StdCallLibrary {
+    Kernel32 INSTANCE = Native.load("kernel32", Kernel32.class);
+    boolean AllocConsole();
+}
+
 public class Main extends Application {
+
+    /** Mude para true se quiser exibir o terminal com logs */
+    public static final boolean SHOW_CONSOLE = true;
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;
@@ -29,6 +43,18 @@ public class Main extends Application {
 
     @Override
     public void start(Stage stage) {
+        if (SHOW_CONSOLE) {
+            Kernel32.INSTANCE.AllocConsole();
+            try {
+                FileOutputStream fos = new FileOutputStream("CONOUT$");
+                System.setOut(new PrintStream(fos, true));
+                System.setErr(new PrintStream(fos, true));
+            } catch (Exception e) {
+                System.out.println("Erro ao redirecionar console: " + e.getMessage());
+            }
+            System.out.println("=== SICAD - Console Ativado ===");
+        }
+
         root = new BorderPane();
         root.getStyleClass().add("root");
 
@@ -59,7 +85,7 @@ public class Main extends Application {
         stage.show();
         
         this.conexaoServidor = new ConexaoServidor(this);
-        this.conexaoServidor.conectarServidor("localhost", 5000);
+        this.conexaoServidor.conectarServidor("192.168.1.245", 5000);
 
         // Inicia o servidor de acesso remoto
         this.remoteServer = new RemoteDesktopServer();

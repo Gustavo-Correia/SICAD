@@ -1,6 +1,6 @@
 # SICAD
 
-#Executar projeto frontend mvn javafx:run
+#Executar projeto frontend mvn clean package & mvn javafx:run
 #Executar projeto backend só executar pelo vs mesmo
 
 Instalar Maven descompactar a pasta Apache e colocar em arquivos de programas
