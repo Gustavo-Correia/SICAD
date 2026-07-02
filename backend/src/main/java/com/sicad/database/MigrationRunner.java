@@ -6,7 +6,10 @@ import org.flywaydb.core.Flyway;
 public class MigrationRunner {
 
     public static void rodarMigrations() {
-        Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
+        Dotenv dotenv = Dotenv.configure()
+    .directory("../")
+    .ignoreIfMissing()
+    .load();
 
         String host     = dotenv.get("DB_HOST", "localhost");
         String port     = dotenv.get("DB_PORT", "5432");

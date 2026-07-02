@@ -14,6 +14,9 @@ import javafx.scene.shape.Circle;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
     
+import com.sicad.remote.RemoteDesktopServer;
+import com.sicad.remote.RemoteDesktopClient;
+
 public class Main extends Application {
 
     private BorderPane root;
@@ -21,6 +24,8 @@ public class Main extends Application {
     private Circle statusDot;
     private Label statusText;
     private Label idLabel;
+    
+    private RemoteDesktopServer remoteServer;
 
     @Override
     public void start(Stage stage) {
@@ -52,8 +57,13 @@ public class Main extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(700);
         stage.show();
+        
         this.conexaoServidor = new ConexaoServidor(this);
         this.conexaoServidor.conectarServidor("localhost", 5000);
+
+        // Inicia o servidor de acesso remoto
+        this.remoteServer = new RemoteDesktopServer();
+        this.remoteServer.startServer();
 
         // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
@@ -63,6 +73,9 @@ public class Main extends Application {
     public void stop() throws Exception {
         if (conexaoServidor != null) {
             conexaoServidor.desconectarServidor();
+        }
+        if (remoteServer != null) {
+            remoteServer.stopServer();
         }
         super.stop();
     } 
@@ -317,8 +330,61 @@ public class Main extends Application {
         connectBtn.getStyleClass().add("btn-primary");
         connectBtn.setPrefWidth(200);
 
+        connectBtn.setOnAction(e -> {
+            String targetId = input.getText().trim();
+            
+            if (targetId.isEmpty()) {
+                mostrarAlerta("Erro", "ID inválido", "Por favor, digite um ID válido.", Alert.AlertType.WARNING);
+                return;
+            }
+
+            if (targetId.equals(idLabel.getText())) {
+                mostrarAlerta("Aviso", "Conexão inválida", "Você não pode conectar ao seu próprio dispositivo.", Alert.AlertType.WARNING);
+                return;
+            }
+
+            if (!conexaoServidor.isConectado()) {
+                mostrarAlerta("Erro", "Sem conexão", "Você não está conectado ao servidor.", Alert.AlertType.ERROR);
+                return;
+            }
+
+            connectBtn.setDisable(true);
+            connectBtn.setText("Conectando...");
+
+            new Thread(() -> {
+                String resposta = conexaoServidor.enviarComando("LOOKUP:" + targetId);
+                
+                Platform.runLater(() -> {
+                    connectBtn.setDisable(false);
+                    connectBtn.setText("Conectar");
+                    
+                    if (resposta != null && resposta.startsWith("IP:")) {
+                        String targetIp = resposta.substring(3).trim();
+                        System.out.println("ID encontrado! IP alvo: " + targetIp);
+                        
+                        // Inicia a sessão de acesso remoto como cliente
+                        RemoteDesktopClient client = new RemoteDesktopClient(targetIp, idLabel.getText());
+                        client.connect();
+                        
+                    } else {
+                        mostrarAlerta("Erro", "Dispositivo não encontrado", 
+                            "O ID " + targetId + " não está registrado ou encontra-se offline.", 
+                            Alert.AlertType.ERROR);
+                    }
+                });
+            }).start();
+        });
+
         card.getChildren().addAll(title, input, connectBtn);
         return card;
+    }
+
+    private void mostrarAlerta(String title, String header, String content, Alert.AlertType type) {
+        Alert alert = new Alert(type);
+        alert.setTitle(title);
+        alert.setHeaderText(header);
+        alert.setContentText(content);
+        alert.showAndWait();
     }
 
     private VBox createRecentCard(String name, String id, String time, String type) {

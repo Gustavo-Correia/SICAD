@@ -7,7 +7,10 @@ import io.github.cdimascio.dotenv.Dotenv;
 
 public class DatabaseConnection {
 
-    private static final Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
+    private static final Dotenv dotenv = Dotenv.configure()
+    .directory("../")
+    .ignoreIfMissing()
+    .load();
 
     private static final String DB_HOST = dotenv.get("DB_HOST", "localhost");
     private static final String DB_PORT = dotenv.get("DB_PORT", "5432");
