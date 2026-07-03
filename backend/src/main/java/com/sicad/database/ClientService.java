@@ -52,4 +52,30 @@ public class ClientService {
         }
         return null;
     }
+
+    public static String getPublicAddress(String identificador) throws SQLException {
+        String sql = "SELECT enderecopublico FROM clientes WHERE identificador = ? AND enderecopublico IS NOT NULL AND enderecopublico <> ''";
+
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, identificador);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("enderecopublico");
+                }
+            }
+        }
+        return null;
+    }
+
+    public static void savePublicAddress(String identificador, String enderecoPublico) throws SQLException {
+        String sql = "UPDATE clientes SET enderecopublico = ? WHERE identificador = ?";
+
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, enderecoPublico);
+            stmt.setString(2, identificador);
+            stmt.executeUpdate();
+        }
+    }
 }

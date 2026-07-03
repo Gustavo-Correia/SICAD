@@ -63,11 +63,12 @@ public class ClientHandler implements Runnable {
 
         try {
             return switch (comando) {
-                case "REGISTER"     -> handleRegister(parts);
-                case "REGISTER_ID"  -> handleRegisterId(parts);
-                case "GET_ID"       -> handleGetId(parts);
-                case "LOOKUP"       -> handleLookup(parts);
-                default             -> "ERRO:Comando desconhecido";
+                case "REGISTER"         -> handleRegister(parts);
+                case "REGISTER_ID"      -> handleRegisterId(parts);
+                case "GET_ID"           -> handleGetId(parts);
+                case "LOOKUP"           -> handleLookup(parts);
+                case "REGISTER_PUBLIC"  -> handleRegisterPublic(parts);
+                default                 -> "ERRO:Comando desconhecido";
             };
         } catch (Exception e) {
             System.out.println("Erro ao processar comando '" + comando + "': " + e.getMessage());
@@ -106,9 +107,23 @@ public class ClientHandler implements Runnable {
         return foundId != null ? "ID:" + foundId : "NOT_FOUND";
     }
 
+    // REGISTER_PUBLIC:<id>:<host:port>
+    // Ex: REGISTER_PUBLIC:AB123456:bore.pub:12345
+    private String handleRegisterPublic(String[] parts) throws Exception {
+        String clientId = parts[1];
+        String publicAddr = parts[2];
+        ClientService.savePublicAddress(clientId, publicAddr);
+        System.out.println("Endereço público registrado: " + clientId + " -> " + publicAddr);
+        return "OK";
+    }
+
     // LOOKUP:<identificador>
     private String handleLookup(String[] parts) throws Exception {
         String clientId = parts[1];
+        String publicAddr = ClientService.getPublicAddress(clientId);
+        if (publicAddr != null) {
+            return "ADDR:" + publicAddr;
+        }
         String storedIp = ClientService.getClientIp(clientId);
         return storedIp != null ? "IP:" + storedIp : "NOT_FOUND";
     }

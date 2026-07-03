@@ -15,21 +15,23 @@ import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
 public class RemoteDesktopClient {
-    private final String targetIp;
+    private final String targetHost;
+    private final int targetPort;
     private final String localId;
     private Socket socket;
     private PrintWriter out;
     private volatile boolean running = true;
 
-    public RemoteDesktopClient(String targetIp, String localId) {
-        this.targetIp = targetIp;
+    public RemoteDesktopClient(String targetIp, int targetPort, String localId) {
+        this.targetHost = targetIp;
+        this.targetPort = targetPort;
         this.localId = localId;
     }
 
     public void connect() {
         new Thread(() -> {
             try {
-                socket = new Socket(targetIp, RemoteDesktopServer.PORT);
+                socket = new Socket(targetHost, targetPort);
                 out = new PrintWriter(socket.getOutputStream(), true);
                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
@@ -52,7 +54,7 @@ public class RemoteDesktopClient {
                 startVideoLoop(dataIn);
 
             } catch (Exception e) {
-                Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar ao IP: " + targetIp + "\n" + e.getMessage()));
+                Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar a: " + targetHost + ":" + targetPort + "\n" + e.getMessage()));
             }
         }, "remote-client-connect").start();
     }
@@ -61,7 +63,7 @@ public class RemoteDesktopClient {
 
     private void createRemoteWindow() {
         Stage stage = new Stage();
-        stage.setTitle("Acesso Remoto - " + targetIp);
+        stage.setTitle("Acesso Remoto - " + targetHost + ":" + targetPort);
         
         imageView = new ImageView();
         imageView.setPreserveRatio(true);

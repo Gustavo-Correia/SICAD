@@ -73,6 +73,22 @@ public class GerenciadorID {
             System.out.println("Aviso: ID gerado localmente mas não registrado no servidor.");
         }
 
+        // Registrar endereço público para acesso remoto, se configurado
+        registrarEnderecoPublico(novoID);
+
         return novoID;
+    }
+
+    private void registrarEnderecoPublico(String id) {
+        String publicAddr = Main.REMOTE_DESKTOP_PUBLIC_ADDR;
+        if (publicAddr == null || publicAddr.isBlank()) {
+            return;
+        }
+        String resposta = conexao.enviarComando("REGISTER_PUBLIC:" + id + ":" + publicAddr);
+        if (resposta != null && resposta.trim().equals("OK")) {
+            System.out.println("Endereço público registrado no servidor: " + publicAddr);
+        } else {
+            System.out.println("Aviso: não foi possível registrar endereço público.");
+        }
     }
 }

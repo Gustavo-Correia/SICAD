@@ -12,7 +12,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 
 public class RemoteDesktopServer {
-    public static final int PORT = 5005;
+    public static final int PORT = 25457;
     private ServerSocket serverSocket;
     private volatile boolean running = true;
     private Robot robot;

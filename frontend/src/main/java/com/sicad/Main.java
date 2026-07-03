@@ -31,7 +31,14 @@ interface Kernel32 extends StdCallLibrary {
 public class Main extends Application {
 
     /** Mude para true se quiser exibir o terminal com logs */
-    public static final boolean SHOW_CONSOLE = true;
+    public static final boolean SHOW_CONSOLE = false;
+
+    /**
+     * Endereço público do túnel TCP para acesso remoto (porta 25457).
+     * Deixe vazio "" para usar o IP local (mesma rede).
+     * Ex: "bore.pub:12345"
+     */
+    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "";
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;
@@ -85,7 +92,7 @@ public class Main extends Application {
         stage.show();
         
         this.conexaoServidor = new ConexaoServidor(this);
-        this.conexaoServidor.conectarServidor("192.168.1.245", 5000);
+        this.conexaoServidor.conectarServidor("0.tcp.sa.ngrok.io", 25457);
 
         // Inicia o servidor de acesso remoto
         this.remoteServer = new RemoteDesktopServer();
@@ -384,12 +391,21 @@ public class Main extends Application {
                     connectBtn.setDisable(false);
                     connectBtn.setText("Conectar");
                     
-                    if (resposta != null && resposta.startsWith("IP:")) {
+                    if (resposta != null && resposta.startsWith("ADDR:")) {
+                        String targetAddr = resposta.substring(5).trim();
+                        System.out.println("ID encontrado! Endereço público: " + targetAddr);
+                        String[] parts = targetAddr.split(":", 2);
+                        String host = parts[0];
+                        int port = parts.length > 1 ? Integer.parseInt(parts[1]) : RemoteDesktopServer.PORT;
+
+                        RemoteDesktopClient client = new RemoteDesktopClient(host, port, idLabel.getText());
+                        client.connect();
+
+                    } else if (resposta != null && resposta.startsWith("IP:")) {
                         String targetIp = resposta.substring(3).trim();
                         System.out.println("ID encontrado! IP alvo: " + targetIp);
                         
-                        // Inicia a sessão de acesso remoto como cliente
-                        RemoteDesktopClient client = new RemoteDesktopClient(targetIp, idLabel.getText());
+                        RemoteDesktopClient client = new RemoteDesktopClient(targetIp, RemoteDesktopServer.PORT, idLabel.getText());
                         client.connect();
                         
                     } else {
