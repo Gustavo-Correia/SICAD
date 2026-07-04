@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: postgres
+    container_name: sicad_postgres
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - sicad_network
+      - network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -21,20 +21,20 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: redis
+    container_name: sicad_redis
     restart: always
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - sicad_network
+      - network
 
   backend-1:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: backend-1
+    container_name: sicad_backend-1
     restart: always
     env_file:
       - .env
@@ -47,13 +47,13 @@ services:
     ports:
       - "5001:5000"
     networks:
-      - sicad_network
+      - network
 
   backend-2:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: backend-2
+    container_name: sicad_backend-2
     restart: always
     env_file:
       - .env
@@ -66,11 +66,11 @@ services:
     ports:
       - "5002:5000"
     networks:
-      - sicad_network
+      - network
 
   nginx:
     image: nginx:alpine
-    container_name: load-balancer
+    container_name: sicad_load-balancer
     restart: always
     depends_on:
       - backend-1
@@ -80,22 +80,22 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
-      - sicad_network
+      - network
 
-#  cloudflared:
-#    image: cloudflare/cloudflared:latest
-#    container_name: cloudflare_tunnel
-#    restart: unless-stopped
-#    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-#    depends_on:
-#      - nginx
-#    networks:
-#      - sicad_network
+  bore:
+    image: ekzhang/bore:latest
+    container_name: sicad_bore
+    restart: always
+    command: local 8080 --to bore.pub --local-host sicad_load-balancer
+    depends_on:
+      - nginx
+    networks:
+      - network
 
 volumes:
   postgres_data:
   redis_data:
 
 networks:
-  sicad_network:
+  network:
     driver: bridge
