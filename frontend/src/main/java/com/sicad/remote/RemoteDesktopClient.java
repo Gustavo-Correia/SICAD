@@ -45,12 +45,12 @@ public class RemoteDesktopClient {
             try {
                 socket = new Socket(serverHost, serverPort);
                 out = new PrintWriter(socket.getOutputStream(), true);
-                java.io.InputStream inStream = socket.getInputStream();
+                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
                 // Request relay connection to target
                 out.println("RELAY_CONNECT:" + targetId);
 
-                String response = lerLinha(inStream);
+                String response = in.readLine();
                 if (response != null && response.startsWith("ERRO:")) {
                     String reason = response.substring(5);
                     Platform.runLater(() -> mostrarErro("Conexão Recusada", "Alvo não disponível: " + reason));
@@ -61,7 +61,7 @@ public class RemoteDesktopClient {
                 // Now bridged — send AUTH
                 out.println("AUTH:" + localId);
 
-                response = lerLinha(inStream);
+                response = in.readLine();
                 if (response == null || !response.startsWith("ACCEPTED")) {
                     String reason = response != null && response.contains(":") ? response.split(":")[1] : "Desconhecida";
                     Platform.runLater(() -> mostrarErro("Conexão Recusada", "O dispositivo alvo recusou a conexão. Motivo: " + reason));
@@ -72,7 +72,7 @@ public class RemoteDesktopClient {
                 // Aceito, inicia a UI e começa a receber vídeo
                 Platform.runLater(this::createRemoteWindow);
 
-                DataInputStream dataIn = new DataInputStream(inStream);
+                DataInputStream dataIn = new DataInputStream(socket.getInputStream());
                 startVideoLoop(dataIn);
 
             } catch (Exception e) {
@@ -86,13 +86,13 @@ public class RemoteDesktopClient {
             try {
                 socket = new Socket(targetHost, targetPort);
                 out = new PrintWriter(socket.getOutputStream(), true);
-                java.io.InputStream inStream = socket.getInputStream();
+                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
                 // Envia autenticação
                 out.println("AUTH:" + localId);
 
                 // Aguarda resposta
-                String response = lerLinha(inStream);
+                String response = in.readLine();
                 if (response == null || !response.startsWith("ACCEPTED")) {
                     String reason = response != null && response.contains(":") ? response.split(":")[1] : "Desconhecida";
                     Platform.runLater(() -> mostrarErro("Conexão Recusada", "O dispositivo alvo recusou a conexão. Motivo: " + reason));
@@ -103,25 +103,13 @@ public class RemoteDesktopClient {
                 // Aceito, inicia a UI e começa a receber vídeo
                 Platform.runLater(this::createRemoteWindow);
                 
-                DataInputStream dataIn = new DataInputStream(inStream);
+                DataInputStream dataIn = new DataInputStream(socket.getInputStream());
                 startVideoLoop(dataIn);
 
             } catch (Exception e) {
                 Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar a: " + targetHost + ":" + targetPort + "\n" + e.getMessage()));
             }
         }, "remote-client-connect").start();
-    }
-
-    private String lerLinha(java.io.InputStream in) throws Exception {
-        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-        int b;
-        while ((b = in.read()) != -1 && b != '\n') {
-            baos.write(b);
-        }
-        if (b == -1 && baos.size() == 0) {
-            return null;
-        }
-        return baos.toString("UTF-8").trim();
     }
 
     private ImageView imageView;

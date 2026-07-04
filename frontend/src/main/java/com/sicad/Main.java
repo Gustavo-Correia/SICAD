@@ -1,7 +1,8 @@
 package com.sicad;
 
-import java.io.FileOutputStream;
-import java.io.PrintStream;
+import java.io.*;
+import java.net.Socket;
+import java.util.concurrent.CountDownLatch;
 
 import com.sun.jna.Native;
 import com.sun.jna.win32.StdCallLibrary;
@@ -19,28 +20,41 @@ import javafx.scene.shape.SVGPath;
 import javafx.scene.shape.Circle;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
-
-import com.sicad.remote.RemoteDesktopServer;
+    
 import com.sicad.remote.RemoteDesktopClient;
+import com.sicad.remote.ScreenCaster;
+import com.sicad.remote.InputReceiver;
+import java.awt.Robot;
 
 interface Kernel32 extends StdCallLibrary {
     Kernel32 INSTANCE = Native.load("kernel32", Kernel32.class);
-
     boolean AllocConsole();
 }
 
 public class Main extends Application {
 
     /** Mude para true se quiser exibir o terminal com logs */
-    public static final boolean SHOW_CONSOLE = true;
+    public static final boolean SHOW_CONSOLE = false;
+
+    /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
+    public static final String SERVIDOR_REMOTO_HOST = "sicad.felipesilva.tec.br";
+    public static final int PORTA_LOCAL = 8080;
+    public static final int PORTA_REMOTA = 40762;
+
+    /**
+     * Endereço público do túnel TCP para acesso remoto (porta 25457).
+     * Deixe vazio "" para usar o IP local (mesma rede).
+     * Ex: "bore.pub:12345"
+     */
+    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "bore.pub:40762";
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;
     private Circle statusDot;
     private Label statusText;
     private Label idLabel;
-
-    private RemoteDesktopServer remoteServer;
+    
+    private volatile Socket relaySocket;
 
     @Override
     public void start(Stage stage) {
@@ -84,13 +98,10 @@ public class Main extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(700);
         stage.show();
-
+        
         this.conexaoServidor = new ConexaoServidor(this);
-        this.conexaoServidor.conectarServidor("bore.pub", 8939);
 
-        // Inicia o servidor de acesso remoto
-        this.remoteServer = new RemoteDesktopServer();
-        this.remoteServer.startServer();
+        this.conexaoServidor.conectarServidor("bore.pub", 8939);
 
         // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
@@ -101,11 +112,11 @@ public class Main extends Application {
         if (conexaoServidor != null) {
             conexaoServidor.desconectarServidor();
         }
-        if (remoteServer != null) {
-            remoteServer.stopServer();
+        if (relaySocket != null) {
+            try { relaySocket.close(); } catch (Exception e) {}
         }
         super.stop();
-    }
+    } 
 
     public void atualizarStatusConexao(boolean conectado) {
         if (statusDot != null && statusText != null) {
@@ -137,14 +148,10 @@ public class Main extends Application {
      */
     private void inicializarID() {
         new Thread(() -> {
-            // Espera a conexão ficar pronta (máx ~5s)
+            // Espera a conexão ficar pronta (máx ~15s — inclui probe local + remoto)
             int tentativas = 0;
-            while (!conexaoServidor.isConectado() && tentativas < 20) {
-                try {
-                    Thread.sleep(250);
-                } catch (InterruptedException e) {
-                    break;
-                }
+            while (!conexaoServidor.isConectado() && tentativas < 60) {
+                try { Thread.sleep(250); } catch (InterruptedException e) { break; }
                 tentativas++;
             }
 
@@ -159,7 +166,95 @@ public class Main extends Application {
             Platform.runLater(() -> {
                 atualizarID(id);
             });
+
+            iniciarRelayHost(id);
         }, "inicializar-id").start();
+    }
+
+    private void iniciarRelayHost(String id) {
+        new Thread(() -> {
+            while (!Thread.interrupted()) {
+                try {
+                    Socket sock = new Socket(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                    relaySocket = sock;
+                    PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
+                    out.println("REGISTER_RELAY:" + id);
+                    System.out.println("Relay host registrado: " + id);
+
+                    InputStream in = sock.getInputStream();
+                    Robot robot = new Robot();
+
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    int b;
+                    while ((b = in.read()) != -1 && b != '\n') {
+                        baos.write(b);
+                    }
+                    if (baos.size() == 0) {
+                        sock.close();
+                        continue;
+                    }
+
+                    String line = baos.toString("UTF-8").trim();
+                    if (!line.startsWith("AUTH:")) {
+                        sock.close();
+                        continue;
+                    }
+
+                    String remoteId = line.substring(5);
+                    System.out.println("Relay AUTH recebido de: " + remoteId);
+
+                    CountDownLatch latch = new CountDownLatch(1);
+                    final boolean[] accepted = {false};
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                        alert.setTitle("Solicitação de Acesso Remoto");
+                        alert.setHeaderText("Conexão Recebida");
+                        alert.setContentText("O dispositivo " + remoteId + " deseja controlar sua máquina. Permitir?");
+                        alert.showAndWait().ifPresent(response -> {
+                            accepted[0] = response == ButtonType.OK;
+                        });
+                        latch.countDown();
+                    });
+                    latch.await();
+
+                    OutputStream os = sock.getOutputStream();
+                    if (accepted[0]) {
+                        os.write("ACCEPTED\n".getBytes());
+                        os.flush();
+
+                        DataOutputStream dataOut = new DataOutputStream(os);
+                        ScreenCaster caster = new ScreenCaster(dataOut, robot);
+                        InputReceiver receiver = new InputReceiver(sock, robot);
+
+                        Thread casterThread = new Thread(caster, "relay-caster");
+                        Thread receiverThread = new Thread(receiver, "relay-receiver");
+                        casterThread.start();
+                        receiverThread.start();
+
+                        try {
+                            receiverThread.join();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        caster.stopCasting();
+                        System.out.println("Sessão remota encerrada via relay.");
+                    } else {
+                        os.write("REJECTED:Acesso negado pelo usuÃ¡rio\n".getBytes());
+                        os.flush();
+                    }
+
+                    sock.close();
+                } catch (Exception e) {
+                    System.out.println("Relay host: " + e.getMessage());
+                    try { Thread.sleep(3000); } catch (InterruptedException ie) { break; }
+                } finally {
+                    if (relaySocket != null) {
+                        try { relaySocket.close(); } catch (Exception e) {}
+                        relaySocket = null;
+                    }
+                }
+            }
+        }, "relay-host").start();
     }
 
     private VBox createSidebar() {
@@ -182,7 +277,8 @@ public class Main extends Application {
                 createSidebarButton(starIcon, false),
                 createSidebarButton(clockIcon, false),
                 createSpacer(),
-                createSidebarButton(settingsIcon, false));
+                createSidebarButton(settingsIcon, false)
+        );
 
         return sidebar;
     }
@@ -197,13 +293,12 @@ public class Main extends Application {
     private StackPane createSidebarButton(String svg, boolean isActive) {
         StackPane btn = new StackPane();
         btn.getStyleClass().add("sidebar-btn");
-        if (isActive)
-            btn.getStyleClass().add("active");
+        if (isActive) btn.getStyleClass().add("active");
 
         SVGPath path = new SVGPath();
         path.setContent(svg);
         path.getStyleClass().add("sidebar-icon");
-
+        
         btn.getChildren().add(path);
         return btn;
     }
@@ -228,20 +323,13 @@ public class Main extends Application {
         ComboBox<String> themeSelector = new ComboBox<>();
         themeSelector.getItems().addAll("Dark", "Claro", "Azul", "Laranja");
         themeSelector.setValue("Dark");
-        themeSelector.setStyle(
-                "-fx-background-color: transparent; -fx-text-fill: #A9B4D0; -fx-border-color: rgba(255,255,255,0.1); -fx-border-radius: 6;");
+        themeSelector.setStyle("-fx-background-color: transparent; -fx-text-fill: #A9B4D0; -fx-border-color: rgba(255,255,255,0.1); -fx-border-radius: 6;");
         themeSelector.setOnAction(e -> {
             root.getStyleClass().removeAll("theme-light", "theme-blue", "theme-orange");
             switch (themeSelector.getValue()) {
-                case "Claro":
-                    root.getStyleClass().add("theme-light");
-                    break;
-                case "Azul":
-                    root.getStyleClass().add("theme-blue");
-                    break;
-                case "Laranja":
-                    root.getStyleClass().add("theme-orange");
-                    break;
+                case "Claro": root.getStyleClass().add("theme-light"); break;
+                case "Azul": root.getStyleClass().add("theme-blue"); break;
+                case "Laranja": root.getStyleClass().add("theme-orange"); break;
             }
         });
 
@@ -263,12 +351,11 @@ public class Main extends Application {
         navBar.getStyleClass().add("nav-bar");
         navBar.setAlignment(Pos.CENTER_LEFT);
 
-        String[] tabs = { "INÍCIO", "FAVORITOS", "SESSÕES RECENTES", "DISPOSITIVOS", "CONVITES" };
+        String[] tabs = {"INÍCIO", "FAVORITOS", "SESSÕES RECENTES", "DISPOSITIVOS", "CONVITES"};
         for (int i = 0; i < tabs.length; i++) {
             Label tab = new Label(tabs[i]);
             tab.getStyleClass().add("nav-tab");
-            if (i == 0)
-                tab.getStyleClass().add("active");
+            if (i == 0) tab.getStyleClass().add("active");
             navBar.getChildren().add(tab);
         }
         return navBar;
@@ -281,13 +368,13 @@ public class Main extends Application {
         // 1. Connection Area (ID and Connect)
         HBox connectionArea = new HBox(40);
         connectionArea.setAlignment(Pos.TOP_CENTER);
-
+        
         VBox myIdCard = createMyIdCard();
         VBox connectCard = createConnectCard();
-
+        
         HBox.setHgrow(myIdCard, Priority.ALWAYS);
         HBox.setHgrow(connectCard, Priority.ALWAYS);
-
+        
         connectionArea.getChildren().addAll(myIdCard, connectCard);
 
         // 2. Recent Sessions
@@ -298,10 +385,11 @@ public class Main extends Application {
 
         FlowPane recentsGrid = new FlowPane(20, 20);
         recentsGrid.getChildren().addAll(
-                createRecentCard("Notebook Casa", "EC102345", "Ontem", "desktop"),
-                createRecentCard("PC Escritório", "AB987654", "Há 2 horas", "desktop"),
-                createRecentCard("Macbook Pro", "XY123456", "12/06/2026", "desktop"),
-                createRecentCard("Celular Pessoal", "ZW987654", "10/06/2026", "mobile"));
+            createRecentCard("Notebook Casa", "EC102345", "Ontem", "desktop"),
+            createRecentCard("PC Escritório", "AB987654", "Há 2 horas", "desktop"),
+            createRecentCard("Macbook Pro", "XY123456", "12/06/2026", "desktop"),
+            createRecentCard("Celular Pessoal", "ZW987654", "10/06/2026", "mobile")
+        );
         recentsSection.getChildren().addAll(recentsTitle, recentsGrid);
 
         // 3. Info Panel
@@ -312,9 +400,10 @@ public class Main extends Application {
 
         HBox statsGrid = new HBox(20);
         statsGrid.getChildren().addAll(
-                createStatCard("Conexões Hoje", "12"),
-                createStatCard("Dispositivos", "25"),
-                createStatCard("Último Acesso", "Hoje 14:32"));
+            createStatCard("Conexões Hoje", "12"),
+            createStatCard("Dispositivos", "25"),
+            createStatCard("Último Acesso", "Hoje 14:32")
+        );
         infoSection.getChildren().addAll(infoTitle, statsGrid);
 
         content.getChildren().addAll(connectionArea, recentsSection, infoSection);
@@ -369,15 +458,14 @@ public class Main extends Application {
 
         connectBtn.setOnAction(e -> {
             String targetId = input.getText().trim();
-
+            
             if (targetId.isEmpty()) {
                 mostrarAlerta("Erro", "ID inválido", "Por favor, digite um ID válido.", Alert.AlertType.WARNING);
                 return;
             }
 
             if (targetId.equals(idLabel.getText())) {
-                mostrarAlerta("Aviso", "Conexão inválida", "Você não pode conectar ao seu próprio dispositivo.",
-                        Alert.AlertType.WARNING);
+                mostrarAlerta("Aviso", "Conexão inválida", "Você não pode conectar ao seu próprio dispositivo.", Alert.AlertType.WARNING);
                 return;
             }
 
@@ -390,26 +478,13 @@ public class Main extends Application {
             connectBtn.setText("Conectando...");
 
             new Thread(() -> {
-                String resposta = conexaoServidor.enviarComando("LOOKUP:" + targetId);
-
                 Platform.runLater(() -> {
                     connectBtn.setDisable(false);
                     connectBtn.setText("Conectar");
-
-                    if (resposta != null && resposta.startsWith("IP:")) {
-                        String targetIp = resposta.substring(3).trim();
-                        System.out.println("ID encontrado! IP alvo: " + targetIp);
-
-                        // Inicia a sessão de acesso remoto como cliente
-                        RemoteDesktopClient client = new RemoteDesktopClient(targetIp, 5005, idLabel.getText());
-                        client.connect();
-
-                    } else {
-                        mostrarAlerta("Erro", "Dispositivo não encontrado",
-                                "O ID " + targetId + " não está registrado ou encontra-se offline.",
-                                Alert.AlertType.ERROR);
-                    }
                 });
+
+                RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
+                client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
             }).start();
         });
 
@@ -432,7 +507,7 @@ public class Main extends Application {
 
         String monitorSvg = "M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z";
         String phoneSvg = "M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z";
-
+        
         SVGPath icon = new SVGPath();
         icon.setContent(type.equals("mobile") ? phoneSvg : monitorSvg);
         icon.setFill(Color.web("#A9B4D0"));
