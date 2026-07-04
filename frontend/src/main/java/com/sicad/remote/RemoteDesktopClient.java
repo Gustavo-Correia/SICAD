@@ -18,14 +18,67 @@ public class RemoteDesktopClient {
     private final String targetHost;
     private final int targetPort;
     private final String localId;
+    private final String targetId;
+    private final boolean useRelay;
     private Socket socket;
     private PrintWriter out;
     private volatile boolean running = true;
+
+    public RemoteDesktopClient(String targetId, String localId) {
+        this.targetId = targetId;
+        this.localId = localId;
+        this.useRelay = true;
+        this.targetHost = null;
+        this.targetPort = 0;
+    }
 
     public RemoteDesktopClient(String targetIp, int targetPort, String localId) {
         this.targetHost = targetIp;
         this.targetPort = targetPort;
         this.localId = localId;
+        this.targetId = null;
+        this.useRelay = false;
+    }
+
+    public void connectRelay(String serverHost, int serverPort) {
+        new Thread(() -> {
+            try {
+                socket = new Socket(serverHost, serverPort);
+                out = new PrintWriter(socket.getOutputStream(), true);
+                java.io.InputStream inStream = socket.getInputStream();
+
+                // Request relay connection to target
+                out.println("RELAY_CONNECT:" + targetId);
+
+                String response = lerLinha(inStream);
+                if (response != null && response.startsWith("ERRO:")) {
+                    String reason = response.substring(5);
+                    Platform.runLater(() -> mostrarErro("Conexão Recusada", "Alvo não disponível: " + reason));
+                    socket.close();
+                    return;
+                }
+
+                // Now bridged — send AUTH
+                out.println("AUTH:" + localId);
+
+                response = lerLinha(inStream);
+                if (response == null || !response.startsWith("ACCEPTED")) {
+                    String reason = response != null && response.contains(":") ? response.split(":")[1] : "Desconhecida";
+                    Platform.runLater(() -> mostrarErro("Conexão Recusada", "O dispositivo alvo recusou a conexão. Motivo: " + reason));
+                    socket.close();
+                    return;
+                }
+
+                // Aceito, inicia a UI e começa a receber vídeo
+                Platform.runLater(this::createRemoteWindow);
+
+                DataInputStream dataIn = new DataInputStream(inStream);
+                startVideoLoop(dataIn);
+
+            } catch (Exception e) {
+                Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar via relay: " + e.getMessage()));
+            }
+        }, "remote-client-relay").start();
     }
 
     public void connect() {
@@ -33,13 +86,13 @@ public class RemoteDesktopClient {
             try {
                 socket = new Socket(targetHost, targetPort);
                 out = new PrintWriter(socket.getOutputStream(), true);
-                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                java.io.InputStream inStream = socket.getInputStream();
 
                 // Envia autenticação
                 out.println("AUTH:" + localId);
 
                 // Aguarda resposta
-                String response = in.readLine();
+                String response = lerLinha(inStream);
                 if (response == null || !response.startsWith("ACCEPTED")) {
                     String reason = response != null && response.contains(":") ? response.split(":")[1] : "Desconhecida";
                     Platform.runLater(() -> mostrarErro("Conexão Recusada", "O dispositivo alvo recusou a conexão. Motivo: " + reason));
@@ -50,13 +103,25 @@ public class RemoteDesktopClient {
                 // Aceito, inicia a UI e começa a receber vídeo
                 Platform.runLater(this::createRemoteWindow);
                 
-                DataInputStream dataIn = new DataInputStream(socket.getInputStream());
+                DataInputStream dataIn = new DataInputStream(inStream);
                 startVideoLoop(dataIn);
 
             } catch (Exception e) {
                 Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar a: " + targetHost + ":" + targetPort + "\n" + e.getMessage()));
             }
         }, "remote-client-connect").start();
+    }
+
+    private String lerLinha(java.io.InputStream in) throws Exception {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        int b;
+        while ((b = in.read()) != -1 && b != '\n') {
+            baos.write(b);
+        }
+        if (b == -1 && baos.size() == 0) {
+            return null;
+        }
+        return baos.toString("UTF-8").trim();
     }
 
     private ImageView imageView;
