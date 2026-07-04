@@ -36,14 +36,14 @@ public class Main extends Application {
     /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
     public static final String SERVIDOR_REMOTO_HOST = "sicad.felipesilva.tec.br";
     public static final int PORTA_LOCAL = 8080;
-    public static final int PORTA_REMOTA = 40762;
+    public static final int PORTA_REMOTA = 44576;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
      * Deixe vazio "" para usar o IP local (mesma rede).
      * Ex: "bore.pub:12345"
      */
-    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "";
+    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "bore.pub:44576";
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;

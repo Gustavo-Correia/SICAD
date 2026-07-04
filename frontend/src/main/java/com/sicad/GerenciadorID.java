@@ -52,31 +52,29 @@ public class GerenciadorID {
         // 1. Consultar servidor pelo IP
         String resposta = conexao.enviarComando("GET_ID:" + ipLocal);
 
+        String id;
         if (resposta != null && resposta.startsWith("ID:")) {
-            String idExistente = resposta.substring(3).trim();
-            System.out.println("ID encontrado no servidor: " + idExistente);
-            return idExistente;
-        }
-
-        System.out.println("Nenhum ID encontrado para o IP: " + ipLocal);
-
-        // 2. Gerar novo ID
-        String novoID = gerarNovoID();
-        System.out.println("Novo ID gerado: " + novoID);
-
-        // 3. Registrar no servidor
-        resposta = conexao.enviarComando("REGISTER_ID:" + ipLocal + ":" + novoID);
-
-        if (resposta != null && resposta.trim().equals("OK")) {
-            System.out.println("ID registrado com sucesso no servidor: " + novoID);
+            id = resposta.substring(3).trim();
+            System.out.println("ID encontrado no servidor: " + id);
         } else {
-            System.out.println("Aviso: ID gerado localmente mas não registrado no servidor.");
+            System.out.println("Nenhum ID encontrado para o IP: " + ipLocal);
+
+            id = gerarNovoID();
+            System.out.println("Novo ID gerado: " + id);
+
+            resposta = conexao.enviarComando("REGISTER_ID:" + ipLocal + ":" + id);
+
+            if (resposta != null && resposta.trim().equals("OK")) {
+                System.out.println("ID registrado com sucesso no servidor: " + id);
+            } else {
+                System.out.println("Aviso: ID gerado localmente mas não registrado no servidor.");
+            }
         }
 
         // Registrar endereço público para acesso remoto, se configurado
-        registrarEnderecoPublico(novoID);
+        registrarEnderecoPublico(id);
 
-        return novoID;
+        return id;
     }
 
     private void registrarEnderecoPublico(String id) {
