@@ -1,7 +1,8 @@
 package com.sicad;
 
-import java.io.FileOutputStream;
-import java.io.PrintStream;
+import java.io.*;
+import java.net.Socket;
+import java.util.concurrent.CountDownLatch;
 
 import com.sun.jna.Native;
 import com.sun.jna.win32.StdCallLibrary;
@@ -20,8 +21,10 @@ import javafx.scene.shape.Circle;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
     
-import com.sicad.remote.RemoteDesktopServer;
 import com.sicad.remote.RemoteDesktopClient;
+import com.sicad.remote.ScreenCaster;
+import com.sicad.remote.InputReceiver;
+import java.awt.Robot;
 
 interface Kernel32 extends StdCallLibrary {
     Kernel32 INSTANCE = Native.load("kernel32", Kernel32.class);
@@ -36,14 +39,14 @@ public class Main extends Application {
     /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
     public static final String SERVIDOR_REMOTO_HOST = "sicad.felipesilva.tec.br";
     public static final int PORTA_LOCAL = 8080;
-    public static final int PORTA_REMOTA = 44576;
+    public static final int PORTA_REMOTA = 40762;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
      * Deixe vazio "" para usar o IP local (mesma rede).
      * Ex: "bore.pub:12345"
      */
-    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "bore.pub:44576";
+    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "bore.pub:40762";
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;
@@ -51,7 +54,7 @@ public class Main extends Application {
     private Label statusText;
     private Label idLabel;
     
-    private RemoteDesktopServer remoteServer;
+    private volatile Socket relaySocket;
 
     @Override
     public void start(Stage stage) {
@@ -103,10 +106,6 @@ public class Main extends Application {
                 SERVIDOR_REMOTO_HOST, PORTA_REMOTA
         );   
 
-        // Inicia o servidor de acesso remoto
-        this.remoteServer = new RemoteDesktopServer();
-        this.remoteServer.startServer();
-
         // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
     }
@@ -116,8 +115,8 @@ public class Main extends Application {
         if (conexaoServidor != null) {
             conexaoServidor.desconectarServidor();
         }
-        if (remoteServer != null) {
-            remoteServer.stopServer();
+        if (relaySocket != null) {
+            try { relaySocket.close(); } catch (Exception e) {}
         }
         super.stop();
     } 
@@ -170,7 +169,95 @@ public class Main extends Application {
             Platform.runLater(() -> {
                 atualizarID(id);
             });
+
+            iniciarRelayHost(id);
         }, "inicializar-id").start();
+    }
+
+    private void iniciarRelayHost(String id) {
+        new Thread(() -> {
+            while (!Thread.interrupted()) {
+                try {
+                    Socket sock = new Socket(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                    relaySocket = sock;
+                    PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
+                    out.println("REGISTER_RELAY:" + id);
+                    System.out.println("Relay host registrado: " + id);
+
+                    InputStream in = sock.getInputStream();
+                    Robot robot = new Robot();
+
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    int b;
+                    while ((b = in.read()) != -1 && b != '\n') {
+                        baos.write(b);
+                    }
+                    if (baos.size() == 0) {
+                        sock.close();
+                        continue;
+                    }
+
+                    String line = baos.toString("UTF-8").trim();
+                    if (!line.startsWith("AUTH:")) {
+                        sock.close();
+                        continue;
+                    }
+
+                    String remoteId = line.substring(5);
+                    System.out.println("Relay AUTH recebido de: " + remoteId);
+
+                    CountDownLatch latch = new CountDownLatch(1);
+                    final boolean[] accepted = {false};
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                        alert.setTitle("Solicitação de Acesso Remoto");
+                        alert.setHeaderText("Conexão Recebida");
+                        alert.setContentText("O dispositivo " + remoteId + " deseja controlar sua máquina. Permitir?");
+                        alert.showAndWait().ifPresent(response -> {
+                            accepted[0] = response == ButtonType.OK;
+                        });
+                        latch.countDown();
+                    });
+                    latch.await();
+
+                    OutputStream os = sock.getOutputStream();
+                    if (accepted[0]) {
+                        os.write("ACCEPTED\n".getBytes());
+                        os.flush();
+
+                        DataOutputStream dataOut = new DataOutputStream(os);
+                        ScreenCaster caster = new ScreenCaster(dataOut, robot);
+                        InputReceiver receiver = new InputReceiver(sock, robot);
+
+                        Thread casterThread = new Thread(caster, "relay-caster");
+                        Thread receiverThread = new Thread(receiver, "relay-receiver");
+                        casterThread.start();
+                        receiverThread.start();
+
+                        try {
+                            receiverThread.join();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        caster.stopCasting();
+                        System.out.println("Sessão remota encerrada via relay.");
+                    } else {
+                        os.write("REJECTED:Acesso negado pelo usuÃ¡rio\n".getBytes());
+                        os.flush();
+                    }
+
+                    sock.close();
+                } catch (Exception e) {
+                    System.out.println("Relay host: " + e.getMessage());
+                    try { Thread.sleep(3000); } catch (InterruptedException ie) { break; }
+                } finally {
+                    if (relaySocket != null) {
+                        try { relaySocket.close(); } catch (Exception e) {}
+                        relaySocket = null;
+                    }
+                }
+            }
+        }, "relay-host").start();
     }
 
     private VBox createSidebar() {
@@ -394,35 +481,13 @@ public class Main extends Application {
             connectBtn.setText("Conectando...");
 
             new Thread(() -> {
-                String resposta = conexaoServidor.enviarComando("LOOKUP:" + targetId);
-                
                 Platform.runLater(() -> {
                     connectBtn.setDisable(false);
                     connectBtn.setText("Conectar");
-                    
-                    if (resposta != null && resposta.startsWith("ADDR:")) {
-                        String targetAddr = resposta.substring(5).trim();
-                        System.out.println("ID encontrado! Endereço público: " + targetAddr);
-                        String[] parts = targetAddr.split(":", 2);
-                        String host = parts[0];
-                        int port = parts.length > 1 ? Integer.parseInt(parts[1]) : RemoteDesktopServer.PORT;
-
-                        RemoteDesktopClient client = new RemoteDesktopClient(host, port, idLabel.getText());
-                        client.connect();
-
-                    } else if (resposta != null && resposta.startsWith("IP:")) {
-                        String targetIp = resposta.substring(3).trim();
-                        System.out.println("ID encontrado! IP alvo: " + targetIp);
-                        
-                        RemoteDesktopClient client = new RemoteDesktopClient(targetIp, RemoteDesktopServer.PORT, idLabel.getText());
-                        client.connect();
-                        
-                    } else {
-                        mostrarAlerta("Erro", "Dispositivo não encontrado", 
-                            "O ID " + targetId + " não está registrado ou encontra-se offline.", 
-                            Alert.AlertType.ERROR);
-                    }
                 });
+
+                RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
+                client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
             }).start();
         });
 
