@@ -33,6 +33,11 @@ public class Main extends Application {
     /** Mude para true se quiser exibir o terminal com logs */
     public static final boolean SHOW_CONSOLE = false;
 
+    /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
+    public static final String SERVIDOR_REMOTO_HOST = "sicad.felipesilva.tec.br";
+    public static final int PORTA_LOCAL = 8080;
+    public static final int PORTA_REMOTA = 40762;
+
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
      * Deixe vazio "" para usar o IP local (mesma rede).
@@ -92,7 +97,11 @@ public class Main extends Application {
         stage.show();
         
         this.conexaoServidor = new ConexaoServidor(this);
-        this.conexaoServidor.conectarServidor("0.tcp.sa.ngrok.io", 25457);
+
+        this.conexaoServidor.conectarComFallback(
+                "127.0.0.1", PORTA_LOCAL,
+                SERVIDOR_REMOTO_HOST, PORTA_REMOTA
+        );   
 
         // Inicia o servidor de acesso remoto
         this.remoteServer = new RemoteDesktopServer();
@@ -143,9 +152,9 @@ public class Main extends Application {
      */
     private void inicializarID() {
         new Thread(() -> {
-            // Espera a conexão ficar pronta (máx ~5s)
+            // Espera a conexão ficar pronta (máx ~15s — inclui probe local + remoto)
             int tentativas = 0;
-            while (!conexaoServidor.isConectado() && tentativas < 20) {
+            while (!conexaoServidor.isConectado() && tentativas < 60) {
                 try { Thread.sleep(250); } catch (InterruptedException e) { break; }
                 tentativas++;
             }
