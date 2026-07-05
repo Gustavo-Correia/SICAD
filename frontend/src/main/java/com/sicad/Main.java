@@ -178,15 +178,9 @@ public class Main extends Application {
         new Thread(() -> {
             while (!Thread.interrupted()) {
                 try {
-                    // Tenta local primeiro, depois remoto
-                    Socket sock;
-                    try {
-                        sock = new Socket();
-                        sock.connect(new java.net.InetSocketAddress("127.0.0.1", PORTA_LOCAL), 2000);
-                    } catch (Exception localEx) {
-                        sock = new Socket();
-                        sock.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
-                    }
+                    // Relay SEMPRE via remoto (bore) para que viewers remotos consigam fazer bridge
+                    Socket sock = new Socket();
+                    sock.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
                     relaySocket = sock;
                     PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
                     out.println("REGISTER_RELAY:" + id);
@@ -495,15 +489,8 @@ public class Main extends Application {
                 });
 
                 RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
-                // Tenta local primeiro, depois remoto
-                try {
-                    java.net.Socket test = new java.net.Socket();
-                    test.connect(new java.net.InetSocketAddress("127.0.0.1", PORTA_LOCAL), 2000);
-                    test.close();
-                    client.connectRelay("127.0.0.1", PORTA_LOCAL);
-                } catch (Exception ex) {
-                    client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
-                }
+                // Relay SEMPRE via remoto (bore) para fazer bridge com o host registrado
+                client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
             }).start();
         });
 
