@@ -39,7 +39,7 @@ public class Main extends Application {
     /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
     public static final String SERVIDOR_REMOTO_HOST = "bore.pub";
     public static final int PORTA_LOCAL = 5001;
-    public static final int PORTA_REMOTA = 43427;
+    public static final int PORTA_REMOTA = 19664;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
