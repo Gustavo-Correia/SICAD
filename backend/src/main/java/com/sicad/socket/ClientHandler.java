@@ -100,11 +100,16 @@ public class ClientHandler implements Runnable {
         }
 
         System.out.println("Bridging relay: " + clientIp + " -> " + targetId);
+        System.out.println("Target socket state: closed=" + targetSocket.isClosed() + " connected=" + targetSocket.isConnected());
 
         InputStream clientIn = socket.getInputStream();
         OutputStream clientOut = socket.getOutputStream();
         InputStream targetIn = targetSocket.getInputStream();
         OutputStream targetOut = targetSocket.getOutputStream();
+
+        // Envia confirmação de que a ponte foi iniciada para desbloquear o cliente (evita deadlock)
+        clientOut.write("OK\n".getBytes());
+        clientOut.flush();
 
         // Read AUTH from client and relay to target
         String authLine;
@@ -116,13 +121,16 @@ public class ClientHandler implements Runnable {
             }
             authLine = baos.toString("UTF-8").trim();
         }
+        System.out.println("Bridge AUTH received: '" + authLine + "'");
 
         if (authLine.isEmpty() || !authLine.startsWith("AUTH:")) {
+            System.out.println("Bridge REJECTED: invalid auth");
             clientOut.write("REJECTED:Autentica\u00e7\u00e3o inv\u00e1lida\n".getBytes());
             clientOut.flush();
             return;
         }
 
+        System.out.println("Bridge: forwarding AUTH to target...");
         targetOut.write((authLine + "\n").getBytes());
         targetOut.flush();
 
@@ -136,13 +144,16 @@ public class ClientHandler implements Runnable {
             }
             response = baos.toString("UTF-8").trim();
         }
+        System.out.println("Bridge: target responded: '" + response + "'");
 
         clientOut.write((response + "\n").getBytes());
         clientOut.flush();
 
         if (!response.startsWith("ACCEPTED")) {
+            System.out.println("Bridge: target rejected connection");
             return;
         }
+        System.out.println("Bridge: ACCEPTED! Starting bidirectional relay...");
 
         closeOnExit = false;
 

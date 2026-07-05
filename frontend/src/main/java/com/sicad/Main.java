@@ -90,7 +90,20 @@ public class Main extends Application {
         root.setCenter(scrollPane);
 
         Scene scene = new Scene(root, 1400, 850);
-        String css = getClass().getResource("/com/sicad/styles.css").toExternalForm();
+        java.net.URL cssUrl = getClass().getResource("styles.css");
+        if (cssUrl == null) {
+            cssUrl = getClass().getResource("/com/sicad/styles.css");
+        }
+        if (cssUrl == null) {
+            cssUrl = Main.class.getResource("styles.css");
+        }
+        if (cssUrl == null) {
+            cssUrl = Main.class.getClassLoader().getResource("com/sicad/styles.css");
+        }
+        if (cssUrl == null) {
+            throw new RuntimeException("Não foi possível encontrar o arquivo styles.css no classpath!");
+        }
+        String css = cssUrl.toExternalForm();
         scene.getStylesheets().add(css);
 
         stage.setTitle("SICAD - Sistema Integrado de Conexão");
