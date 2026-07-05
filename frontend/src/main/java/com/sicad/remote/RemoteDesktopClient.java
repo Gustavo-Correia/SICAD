@@ -121,14 +121,80 @@ public class RemoteDesktopClient {
         if (b == -1 && baos.size() == 0) {
             return null;
         }
-        return baos.toString("UTF-8").trim();
+        return baos.toString("UTF-8");
     }
 
     private ImageView imageView;
+    private boolean stageSizeAdjusted = false;
+
+    private void adjustStageSize(Image img) {
+        if (stageSizeAdjusted || imageView == null || imageView.getScene() == null) return;
+        stageSizeAdjusted = true;
+        
+        try {
+            Stage stage = (Stage) imageView.getScene().getWindow();
+            javafx.stage.Screen screen = javafx.stage.Screen.getPrimary();
+            javafx.geometry.Rectangle2D bounds = screen.getVisualBounds();
+            
+            double localWidth = bounds.getWidth();
+            double localHeight = bounds.getHeight();
+            
+            double remoteWidth = img.getWidth();
+            double remoteHeight = img.getHeight();
+            
+            // Define o tamanho inicial como máximo 80% do monitor local
+            double maxStageWidth = localWidth * 0.8;
+            double maxStageHeight = localHeight * 0.8;
+            
+            double scale = Math.min(maxStageWidth / remoteWidth, maxStageHeight / remoteHeight);
+            scale = Math.min(1.0, scale); // Não amplia além da resolução original
+            
+            stage.setWidth(remoteWidth * scale);
+            stage.setHeight(remoteHeight * scale);
+            stage.centerOnScreen();
+        } catch (Exception e) {
+            System.out.println("Erro ao ajustar tamanho do Stage: " + e.getMessage());
+        }
+    }
+
+    private javafx.geometry.Point2D mapCoordinates(double mouseX, double mouseY) {
+        if (imageView == null || imageView.getImage() == null) {
+            return null;
+        }
+        
+        double imageWidth = imageView.getImage().getWidth();
+        double imageHeight = imageView.getImage().getHeight();
+        
+        double viewWidth = imageView.getBoundsInLocal().getWidth();
+        double viewHeight = imageView.getBoundsInLocal().getHeight();
+        
+        double scaleX = viewWidth / imageWidth;
+        double scaleY = viewHeight / imageHeight;
+        
+        // Calcula a escala real mantendo o aspect ratio
+        double finalScale = Math.min(scaleX, scaleY);
+        
+        double actualImageWidth = imageWidth * finalScale;
+        double actualImageHeight = imageHeight * finalScale;
+        
+        // Offset (barras pretas / letterbox ou pillarbox)
+        double offsetX = (viewWidth - actualImageWidth) / 2.0;
+        double offsetY = (viewHeight - actualImageHeight) / 2.0;
+        
+        // Mapeia para o pixel da imagem remota
+        double mappedX = (mouseX - offsetX) / finalScale;
+        double mappedY = (mouseY - offsetY) / finalScale;
+        
+        // Limita dentro das bordas da imagem remota
+        mappedX = Math.max(0, Math.min(imageWidth - 1, mappedX));
+        mappedY = Math.max(0, Math.min(imageHeight - 1, mappedY));
+        
+        return new javafx.geometry.Point2D(mappedX, mappedY);
+    }
 
     private void createRemoteWindow() {
         Stage stage = new Stage();
-        stage.setTitle("Acesso Remoto - " + targetHost + ":" + targetPort);
+        stage.setTitle("Acesso Remoto - ID: " + targetId);
         
         imageView = new ImageView();
         imageView.setPreserveRatio(true);
@@ -139,59 +205,52 @@ public class RemoteDesktopClient {
         // Responsivo
         imageView.fitWidthProperty().bind(scene.widthProperty());
         imageView.fitHeightProperty().bind(scene.heightProperty());
-
-        // Eventos de Mouse
+ 
+        // Eventos de Mouse com mapeamento de coordenadas corrigido
         scene.setOnMouseMoved(e -> {
-            // Mapeia a coordenada da tela local para a imagem
-            if (imageView.getImage() != null) {
-                double scaleX = imageView.getImage().getWidth() / imageView.getBoundsInLocal().getWidth();
-                double scaleY = imageView.getImage().getHeight() / imageView.getBoundsInLocal().getHeight();
-                int x = (int) (e.getX() * scaleX);
-                int y = (int) (e.getY() * scaleY);
-                sendCommand("MOUSE_MOVE:" + x + ":" + y);
+            javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
+            if (mapped != null) {
+                sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
         });
-
+ 
         scene.setOnMouseDragged(e -> {
-            if (imageView.getImage() != null) {
-                double scaleX = imageView.getImage().getWidth() / imageView.getBoundsInLocal().getWidth();
-                double scaleY = imageView.getImage().getHeight() / imageView.getBoundsInLocal().getHeight();
-                int x = (int) (e.getX() * scaleX);
-                int y = (int) (e.getY() * scaleY);
-                sendCommand("MOUSE_MOVE:" + x + ":" + y);
+            javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
+            if (mapped != null) {
+                sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
         });
-
+ 
         scene.setOnMousePressed(e -> {
             int button = 1; // Left
             if (e.isSecondaryButtonDown()) button = 3; // Right
             else if (e.isMiddleButtonDown()) button = 2; // Middle
             sendCommand("MOUSE_PRESS:" + button);
         });
-
+ 
         scene.setOnMouseReleased(e -> {
             int button = 1;
             if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) button = 3;
             else if (e.getButton() == javafx.scene.input.MouseButton.MIDDLE) button = 2;
             sendCommand("MOUSE_RELEASE:" + button);
         });
-
+ 
         // Eventos de Teclado
         scene.setOnKeyPressed(e -> {
-            int keyCode = e.getCode().getCode(); // Nota: o mapeamento exato JavaFX -> AWT pode precisar de ajustes finos
+            int keyCode = e.getCode().getCode();
             sendCommand("KEY_PRESS:" + keyCode);
         });
-
+ 
         scene.setOnKeyReleased(e -> {
             int keyCode = e.getCode().getCode();
             sendCommand("KEY_RELEASE:" + keyCode);
         });
-
+ 
         stage.setOnCloseRequest(e -> disconnect());
         stage.setScene(scene);
         stage.show();
     }
-
+ 
     private void startVideoLoop(DataInputStream dataIn) {
         new Thread(() -> {
             try {
@@ -205,6 +264,7 @@ public class RemoteDesktopClient {
                         Platform.runLater(() -> {
                             if (imageView != null) {
                                 imageView.setImage(img);
+                                adjustStageSize(img);
                             }
                         });
                     }

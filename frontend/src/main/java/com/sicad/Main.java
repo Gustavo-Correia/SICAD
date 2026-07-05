@@ -55,6 +55,8 @@ public class Main extends Application {
     private Label idLabel;
     
     private volatile Socket relaySocket;
+    private TextField idInput;
+    private FlowPane recentsGrid;
 
     @Override
     public void start(Stage stage) {
@@ -403,13 +405,8 @@ public class Main extends Application {
         recentsTitle.getStyleClass().add("title");
         recentsTitle.setStyle("-fx-font-size: 18px;");
 
-        FlowPane recentsGrid = new FlowPane(20, 20);
-        recentsGrid.getChildren().addAll(
-            createRecentCard("Notebook Casa", "EC102345", "Ontem", "desktop"),
-            createRecentCard("PC Escritório", "AB987654", "Há 2 horas", "desktop"),
-            createRecentCard("Macbook Pro", "XY123456", "12/06/2026", "desktop"),
-            createRecentCard("Celular Pessoal", "ZW987654", "10/06/2026", "mobile")
-        );
+        recentsGrid = new FlowPane(20, 20);
+        atualizarRecentes();
         recentsSection.getChildren().addAll(recentsTitle, recentsGrid);
 
         // 3. Info Panel
@@ -467,17 +464,17 @@ public class Main extends Application {
         Label title = new Label("Conectar a outro dispositivo");
         title.getStyleClass().add("subtitle");
 
-        TextField input = new TextField();
-        input.setPromptText("Digite o ID do dispositivo");
-        input.getStyleClass().add("input-modern");
-        input.setMaxWidth(400);
+        idInput = new TextField();
+        idInput.setPromptText("Digite o ID do dispositivo");
+        idInput.getStyleClass().add("input-modern");
+        idInput.setMaxWidth(400);
 
         Button connectBtn = new Button("Conectar");
         connectBtn.getStyleClass().add("btn-primary");
         connectBtn.setPrefWidth(200);
 
         connectBtn.setOnAction(e -> {
-            String targetId = input.getText().trim();
+            String targetId = idInput.getText().trim();
             
             if (targetId.isEmpty()) {
                 mostrarAlerta("Erro", "ID inválido", "Por favor, digite um ID válido.", Alert.AlertType.WARNING);
@@ -494,6 +491,10 @@ public class Main extends Application {
                 return;
             }
 
+            // Salva no histórico de conexões recentes e atualiza o painel
+            GerenciadorHistorico.adicionarConexao(targetId);
+            Platform.runLater(this::atualizarRecentes);
+
             connectBtn.setDisable(true);
             connectBtn.setText("Conectando...");
 
@@ -509,7 +510,7 @@ public class Main extends Application {
             }).start();
         });
 
-        card.getChildren().addAll(title, input, connectBtn);
+        card.getChildren().addAll(title, idInput, connectBtn);
         return card;
     }
 
@@ -521,21 +522,37 @@ public class Main extends Application {
         alert.showAndWait();
     }
 
-    private VBox createRecentCard(String name, String id, String time, String type) {
+    private void atualizarRecentes() {
+        if (recentsGrid == null) return;
+        recentsGrid.getChildren().clear();
+        List<String> historico = GerenciadorHistorico.carregarHistorico();
+        if (historico.isEmpty()) {
+            Label noRecents = new Label("Nenhuma conexão recente.");
+            noRecents.getStyleClass().add("text-secondary");
+            noRecents.setStyle("-fx-font-style: italic; -fx-padding: 10 0 0 0;");
+            recentsGrid.getChildren().add(noRecents);
+        } else {
+            for (String id : historico) {
+                recentsGrid.getChildren().add(createRecentCard(id));
+            }
+        }
+    }
+
+    private VBox createRecentCard(String id) {
         VBox card = new VBox(8);
         card.getStyleClass().add("session-card");
         card.setPrefWidth(240);
+        card.setStyle("-fx-cursor: hand;");
 
         String monitorSvg = "M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z";
-        String phoneSvg = "M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z";
         
         SVGPath icon = new SVGPath();
-        icon.setContent(type.equals("mobile") ? phoneSvg : monitorSvg);
+        icon.setContent(monitorSvg);
         icon.setFill(Color.web("#A9B4D0"));
 
         HBox header = new HBox(10);
         header.setAlignment(Pos.CENTER_LEFT);
-        Label nameLbl = new Label(name);
+        Label nameLbl = new Label("Dispositivo");
         nameLbl.getStyleClass().add("text-primary");
         nameLbl.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
         header.getChildren().addAll(icon, nameLbl);
@@ -544,11 +561,13 @@ public class Main extends Application {
         idLbl.getStyleClass().add("text-primary");
         idLbl.setStyle("-fx-font-family: 'Consolas'; -fx-font-size: 14px;");
 
-        Label timeLbl = new Label(time);
-        timeLbl.getStyleClass().add("text-secondary");
-        timeLbl.setStyle("-fx-font-size: 12px;");
+        card.getChildren().addAll(header, idLbl);
 
-        card.getChildren().addAll(header, idLbl, timeLbl);
+        card.setOnMouseClicked(e -> {
+            if (idInput != null) {
+                idInput.setText(id);
+            }
+        });
         return card;
     }
 

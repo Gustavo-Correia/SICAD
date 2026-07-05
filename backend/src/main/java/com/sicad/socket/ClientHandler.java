@@ -45,7 +45,11 @@ public class ClientHandler implements Runnable {
 
             // Normal command loop
             try (OutputStream out = socket.getOutputStream()) {
-                processarComando(primeiraLinha, out);
+                String primeiraResposta = processarComando(primeiraLinha, out);
+                if (primeiraResposta != null) {
+                    out.write((primeiraResposta + "\n").getBytes());
+                    out.flush();
+                }
                 String linha;
                 while ((linha = lerLinha(socket.getInputStream())) != null) {
                     String resposta = processarComando(linha.trim(), out);
@@ -189,6 +193,10 @@ public class ClientHandler implements Runnable {
         try {
             t2c.join(5000);
         } catch (InterruptedException e) {}
+
+        // Fechamento explícito dos sockets ao sair da ponte para evitar vazamentos (zombies)
+        try { socket.close(); } catch (Exception e) {}
+        try { targetSocket.close(); } catch (Exception e) {}
 
         System.out.println("Bridge encerrada: " + clientIp + " <-> " + targetId);
     }
