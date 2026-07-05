@@ -501,7 +501,7 @@ public class Main extends Application {
                     test.connect(new java.net.InetSocketAddress("127.0.0.1", PORTA_LOCAL), 2000);
                     test.close();
                     client.connectRelay("127.0.0.1", PORTA_LOCAL);
-                } catch (Exception e) {
+                } catch (Exception ex) {
                     client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
                 }
             }).start();
