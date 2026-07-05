@@ -101,7 +101,7 @@ public class Main extends Application {
         
         this.conexaoServidor = new ConexaoServidor(this);
 
-        this.conexaoServidor.conectarServidor("bore.pub", 8939);
+        this.conexaoServidor.conectarServidor(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
 
         // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
