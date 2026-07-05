@@ -101,7 +101,10 @@ public class Main extends Application {
         
         this.conexaoServidor = new ConexaoServidor(this);
 
-        this.conexaoServidor.conectarServidor(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+        this.conexaoServidor.conectarComFallback(
+                "127.0.0.1", PORTA_LOCAL,
+                SERVIDOR_REMOTO_HOST, PORTA_REMOTA
+        );
 
         // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
@@ -175,7 +178,15 @@ public class Main extends Application {
         new Thread(() -> {
             while (!Thread.interrupted()) {
                 try {
-                    Socket sock = new Socket(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                    // Tenta local primeiro, depois remoto
+                    Socket sock;
+                    try {
+                        sock = new Socket();
+                        sock.connect(new java.net.InetSocketAddress("127.0.0.1", PORTA_LOCAL), 2000);
+                    } catch (Exception localEx) {
+                        sock = new Socket();
+                        sock.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
+                    }
                     relaySocket = sock;
                     PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
                     out.println("REGISTER_RELAY:" + id);
@@ -484,7 +495,15 @@ public class Main extends Application {
                 });
 
                 RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
-                client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                // Tenta local primeiro, depois remoto
+                try {
+                    java.net.Socket test = new java.net.Socket();
+                    test.connect(new java.net.InetSocketAddress("127.0.0.1", PORTA_LOCAL), 2000);
+                    test.close();
+                    client.connectRelay("127.0.0.1", PORTA_LOCAL);
+                } catch (Exception e) {
+                    client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                }
             }).start();
         });
 

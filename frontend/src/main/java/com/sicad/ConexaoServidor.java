@@ -76,6 +76,61 @@ public class ConexaoServidor {
     }
 
     /**
+     * Tenta conectar no servidor local primeiro (mesma máquina que roda o Docker).
+     * Se falhar, tenta o endereço remoto (bore tunnel).
+     */
+    public void conectarComFallback(String localHost, int localPort, String remoteHost, int remotePort) {
+        new Thread(() -> {
+            Socket sock = null;
+
+            // Tenta local primeiro
+            try {
+                System.out.println("Tentando conexão local: " + localHost + ":" + localPort);
+                sock = new Socket();
+                sock.connect(new java.net.InetSocketAddress(localHost, localPort), 2000);
+                System.out.println("Conexão LOCAL estabelecida!");
+            } catch (Exception e) {
+                System.out.println("Local indisponível, tentando remoto: " + remoteHost + ":" + remotePort);
+                try {
+                    sock = new Socket();
+                    sock.connect(new java.net.InetSocketAddress(remoteHost, remotePort), 5000);
+                    System.out.println("Conexão REMOTA estabelecida!");
+                } catch (Exception e2) {
+                    System.out.println("Erro na conexão TCP (remoto): " + e2.getMessage());
+                    Platform.runLater(() -> mainApp.atualizarStatusConexao(false));
+                    return;
+                }
+            }
+
+            try {
+                this.socket = sock;
+                this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                this.out = socket.getOutputStream();
+                this.conectado = true;
+
+                Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
+
+                iniciarHeartbeat();
+
+                String linha;
+                while (conectado && (linha = in.readLine()) != null) {
+                    String mensagem = linha.trim();
+                    if ("PONG".equals(mensagem)) {
+                        continue;
+                    }
+                    respostas.put(mensagem);
+                }
+
+                System.out.println("Conexão com o servidor foi encerrada.");
+            } catch (Exception e) {
+                System.out.println("Erro na conexão TCP: " + e.getMessage());
+            } finally {
+                desconectarServidor();
+            }
+        }, "conexao-servidor").start();
+    }
+
+    /**
      * Envia um comando e aguarda a resposta do servidor.
      * Thread-safe: apenas um comando por vez.
      */
