@@ -3,6 +3,7 @@ package com.sicad;
 import java.io.*;
 import java.net.Socket;
 import java.util.concurrent.CountDownLatch;
+import java.util.List;
 
 import com.sun.jna.Native;
 import com.sun.jna.win32.StdCallLibrary;
