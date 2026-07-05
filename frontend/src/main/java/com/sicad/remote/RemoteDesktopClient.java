@@ -1,11 +1,12 @@
 package com.sicad.remote;
 
-import java.awt.MouseInfo;
-import java.awt.Point;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 
 import javafx.application.Platform;
 import javafx.scene.Scene;
@@ -32,44 +33,64 @@ public class RemoteDesktopClient {
         this.targetIp = targetIp;
         this.port = port;
         this.clientId = clientId;
+        System.out.println("RemoteDesktopClient criado: " + targetIp + ":" + port + " id=" + clientId);
     }
 
     public void connect() {
         new Thread(() -> {
             try {
+                System.out.println("[CLIENT] Conectando a " + targetIp + ":" + port + "...");
                 socket = new Socket(targetIp, port);
+                System.out.println("[CLIENT] Socket conectado!");
+
+                InputStream rawIn = socket.getInputStream();
                 out = new PrintWriter(socket.getOutputStream(), true);
-                dataIn = new DataInputStream(socket.getInputStream());
 
+                System.out.println("[CLIENT] Enviando AUTH:" + clientId);
                 out.println("AUTH:" + clientId);
+                out.flush();
+                System.out.println("[CLIENT] AUTH enviado, aguardando resposta...");
 
-                String response = dataIn.readLine();
-                if (response == null) {
-                    showError("Conexão rejeitada", "Resposta vazia do servidor.");
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                int b;
+                while ((b = rawIn.read()) != -1 && b != '\n') {
+                    buf.write(b);
+                }
+                String response = new String(buf.toByteArray(), StandardCharsets.UTF_8).trim();
+                System.out.println("[CLIENT] Resposta recebida: '" + response + "'");
+
+                if (b == -1) {
+                    System.out.println("[CLIENT] ERRO: conexao fechada pelo servidor");
+                    showError("Conexão rejeitada", "Conexão fechada pelo servidor.");
                     close();
                     return;
                 }
 
                 if (response.startsWith("REJECTED")) {
                     String reason = response.contains(":") ? response.split(":", 2)[1] : "Acesso negado";
+                    System.out.println("[CLIENT] REJEITADO: " + reason);
                     showError("Conexão rejeitada", reason);
                     close();
                     return;
                 }
 
                 if (!"ACCEPTED".equals(response)) {
+                    System.out.println("[CLIENT] ERRO: resposta inesperada: " + response);
                     showError("Conexão rejeitada", "Resposta inesperada: " + response);
                     close();
                     return;
                 }
 
                 connected = true;
+                dataIn = new DataInputStream(rawIn);
+                System.out.println("[CLIENT] Aceito! Iniciando recebimento de tela...");
 
                 Platform.runLater(this::createUI);
-
                 receiveScreen();
 
             } catch (Exception e) {
+                System.err.println("[CLIENT] Erro: " + e.getMessage());
+                e.printStackTrace();
                 showError("Erro de conexão", "Não foi possível conectar: " + e.getMessage());
                 close();
             }
@@ -77,6 +98,7 @@ public class RemoteDesktopClient {
     }
 
     private void createUI() {
+        System.out.println("[CLIENT] Criando UI da sessão remota...");
         stage = new Stage();
         stage.setTitle("Acesso Remoto - " + clientId);
         stage.setMaximized(true);
@@ -99,6 +121,7 @@ public class RemoteDesktopClient {
         stage.setScene(scene);
         stage.setOnCloseRequest(e -> close());
         stage.show();
+        System.out.println("[CLIENT] UI da sessão remota exibida.");
     }
 
     private void handleMouseMoved(MouseEvent event) {
@@ -141,23 +164,23 @@ public class RemoteDesktopClient {
 
     private int mapKeyCode(KeyCode code, boolean shift) {
         int c = code.getCode();
-
         if (code.isLetterKey()) {
             return shift ? c : c + 32;
         }
-
         return c;
     }
 
     private void sendCommand(String command) {
         if (out != null) {
             out.println(command);
+            out.flush();
         }
     }
 
     private void receiveScreen() {
         new Thread(() -> {
             try {
+                int frameCount = 0;
                 while (connected) {
                     int length = dataIn.readInt();
                     byte[] imageBytes = new byte[length];
@@ -167,8 +190,12 @@ public class RemoteDesktopClient {
                         if (read == -1) break;
                         totalRead += read;
                     }
-
                     if (totalRead < length) break;
+
+                    frameCount++;
+                    if (frameCount % 30 == 0) {
+                        System.out.println("[CLIENT] Recebidos " + frameCount + " frames (" + length + " bytes)");
+                    }
 
                     ByteArrayInputStream bais = new ByteArrayInputStream(imageBytes);
                     Image frame = new Image(bais);
@@ -179,7 +206,7 @@ public class RemoteDesktopClient {
                     });
                 }
             } catch (Exception e) {
-                System.out.println("RemoteDesktopClient - recebimento de tela encerrado: " + e.getMessage());
+                System.out.println("[CLIENT] Recebimento encerrado: " + e.getMessage());
             } finally {
                 Platform.runLater(() -> {
                     if (stage != null) {
@@ -207,6 +234,7 @@ public class RemoteDesktopClient {
         try {
             if (socket != null && !socket.isClosed()) {
                 socket.close();
+                System.out.println("[CLIENT] Socket fechado.");
             }
         } catch (Exception e) {
             e.printStackTrace();
