@@ -92,12 +92,6 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>com.sicad.Main</mainClass>
-                    <options>
-                        <option>--enable-native-access=javafx.graphics</option>
-                        <option>-Xms32m</option>
-                        <option>-Xmx256m</option>
-                        <option>-XX:+UseSerialGC</option>
-                    </options>
                 </configuration>
             </plugin>
 

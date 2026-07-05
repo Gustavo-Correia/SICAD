@@ -52,41 +52,27 @@ public class GerenciadorID {
         // 1. Consultar servidor pelo IP
         String resposta = conexao.enviarComando("GET_ID:" + ipLocal);
 
-        String id;
         if (resposta != null && resposta.startsWith("ID:")) {
-            id = resposta.substring(3).trim();
-            System.out.println("ID encontrado no servidor: " + id);
-        } else {
-            System.out.println("Nenhum ID encontrado para o IP: " + ipLocal);
-
-            id = gerarNovoID();
-            System.out.println("Novo ID gerado: " + id);
-
-            resposta = conexao.enviarComando("REGISTER_ID:" + ipLocal + ":" + id);
-
-            if (resposta != null && resposta.trim().equals("OK")) {
-                System.out.println("ID registrado com sucesso no servidor: " + id);
-            } else {
-                System.out.println("Aviso: ID gerado localmente mas não registrado no servidor.");
-            }
+            String idExistente = resposta.substring(3).trim();
+            System.out.println("ID encontrado no servidor: " + idExistente);
+            return idExistente;
         }
 
-        // Registrar endereço público para acesso remoto, se configurado
-        registrarEnderecoPublico(id);
+        System.out.println("Nenhum ID encontrado para o IP: " + ipLocal);
 
-        return id;
-    }
+        // 2. Gerar novo ID
+        String novoID = gerarNovoID();
+        System.out.println("Novo ID gerado: " + novoID);
 
-    private void registrarEnderecoPublico(String id) {
-        String publicAddr = Main.REMOTE_DESKTOP_PUBLIC_ADDR;
-        if (publicAddr == null || publicAddr.isBlank()) {
-            return;
-        }
-        String resposta = conexao.enviarComando("REGISTER_PUBLIC:" + id + ":" + publicAddr);
+        // 3. Registrar no servidor
+        resposta = conexao.enviarComando("REGISTER_ID:" + ipLocal + ":" + novoID);
+
         if (resposta != null && resposta.trim().equals("OK")) {
-            System.out.println("Endereço público registrado no servidor: " + publicAddr);
+            System.out.println("ID registrado com sucesso no servidor: " + novoID);
         } else {
-            System.out.println("Aviso: não foi possível registrar endereço público.");
+            System.out.println("Aviso: ID gerado localmente mas não registrado no servidor.");
         }
+
+        return novoID;
     }
 }

@@ -8,27 +8,15 @@ import io.github.cdimascio.dotenv.Dotenv;
 public class DatabaseConnection {
 
     private static final Dotenv dotenv = Dotenv.configure()
-            .directory("../")
-            .ignoreIfMissing()
-            .load();
+    .directory("../")
+    .ignoreIfMissing()
+    .load();
 
-    private static final String DB_HOST = env("DB_HOST", "localhost");
-    private static final String DB_PORT = env("DB_PORT", "5432");
-    private static final String DB_NAME = env("POSTGRES_DB", null);
-    private static final String DB_USER = env("POSTGRES_USER", null);
-    private static final String DB_PASSWORD = env("POSTGRES_PASSWORD", null);
-
-    private static String env(String key, String defaultValue) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        String fromDotenv = dotenv.get(key);
-        if (fromDotenv != null && !fromDotenv.isBlank()) {
-            return fromDotenv;
-        }
-        return defaultValue;
-    }
+    private static final String DB_HOST = dotenv.get("DB_HOST", "localhost");
+    private static final String DB_PORT = dotenv.get("DB_PORT", "5432");
+    private static final String DB_NAME = dotenv.get("POSTGRES_DB");
+    private static final String DB_USER = dotenv.get("POSTGRES_USER");
+    private static final String DB_PASSWORD = dotenv.get("POSTGRES_PASSWORD");
 
     private static final String URL = "jdbc:postgresql://" + DB_HOST + ":" + DB_PORT + "/" + DB_NAME;
 

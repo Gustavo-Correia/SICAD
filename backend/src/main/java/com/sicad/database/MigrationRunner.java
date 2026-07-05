@@ -11,11 +11,11 @@ public class MigrationRunner {
     .ignoreIfMissing()
     .load();
 
-        String host     = env(dotenv, "DB_HOST", "localhost");
-        String port     = env(dotenv, "DB_PORT", "5432");
-        String database = env(dotenv, "POSTGRES_DB", null);
-        String user     = env(dotenv, "POSTGRES_USER", null);
-        String password = env(dotenv, "POSTGRES_PASSWORD", null);
+        String host     = dotenv.get("DB_HOST", "localhost");
+        String port     = dotenv.get("DB_PORT", "5432");
+        String database = dotenv.get("POSTGRES_DB");
+        String user     = dotenv.get("POSTGRES_USER");
+        String password = dotenv.get("POSTGRES_PASSWORD");
 
         if (database == null || user == null || password == null) {
             throw new IllegalStateException(
@@ -39,17 +39,5 @@ public class MigrationRunner {
 
         System.out.println("[Flyway] Migrations executadas: " + result.migrationsExecuted);
         System.out.println("[Flyway] Versão atual do schema: " + result.targetSchemaVersion);
-    }
-
-    private static String env(Dotenv dotenv, String key, String defaultValue) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        String fromDotenv = dotenv.get(key);
-        if (fromDotenv != null && !fromDotenv.isBlank()) {
-            return fromDotenv;
-        }
-        return defaultValue;
     }
 }
