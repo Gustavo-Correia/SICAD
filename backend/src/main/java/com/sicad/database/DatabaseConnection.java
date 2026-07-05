@@ -8,9 +8,8 @@ import io.github.cdimascio.dotenv.Dotenv;
 public class DatabaseConnection {
 
     private static final Dotenv dotenv = Dotenv.configure()
-    .directory("../")
-    .ignoreIfMissing()
-    .load();
+        .ignoreIfMissing()
+        .load();
 
     private static final String DB_HOST = dotenv.get("DB_HOST", "localhost");
     private static final String DB_PORT = dotenv.get("DB_PORT", "5432");
