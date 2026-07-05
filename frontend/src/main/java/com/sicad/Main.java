@@ -86,7 +86,7 @@ public class Main extends Application {
         stage.show();
 
         this.conexaoServidor = new ConexaoServidor(this);
-        this.conexaoServidor.conectarServidor("127.0.0.1", 5001);
+        this.conexaoServidor.conectarServidor("bore.pub", 8939);
 
         // Inicia o servidor de acesso remoto
         this.remoteServer = new RemoteDesktopServer();
