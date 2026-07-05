@@ -132,6 +132,8 @@ public class Main extends Application {
             try { relaySocket.close(); } catch (Exception e) {}
         }
         super.stop();
+        System.out.println("Finalizando todos os processos...");
+        System.exit(0);
     } 
 
     public void atualizarStatusConexao(boolean conectado) {
