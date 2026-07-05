@@ -389,7 +389,7 @@ public class Main extends Application {
                         System.out.println("ID encontrado! IP alvo: " + targetIp);
                         
                         // Inicia a sessão de acesso remoto como cliente
-                        RemoteDesktopClient client = new RemoteDesktopClient(targetIp, idLabel.getText());
+                        RemoteDesktopClient client = new RemoteDesktopClient(targetIp, 5005, idLabel.getText());
                         client.connect();
                         
                     } else {

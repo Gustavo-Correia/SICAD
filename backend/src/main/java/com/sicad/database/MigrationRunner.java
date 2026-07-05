@@ -7,9 +7,8 @@ public class MigrationRunner {
 
     public static void rodarMigrations() {
         Dotenv dotenv = Dotenv.configure()
-    .directory("../")
-    .ignoreIfMissing()
-    .load();
+            .ignoreIfMissing()
+            .load();
 
         String host     = dotenv.get("DB_HOST", "localhost");
         String port     = dotenv.get("DB_PORT", "5432");
