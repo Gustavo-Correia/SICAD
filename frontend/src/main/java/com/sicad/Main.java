@@ -37,9 +37,9 @@ public class Main extends Application {
     public static final boolean SHOW_CONSOLE = false;
 
     /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
-    public static final String SERVIDOR_REMOTO_HOST = "sicad.felipesilva.tec.br";
-    public static final int PORTA_LOCAL = 8080;
-    public static final int PORTA_REMOTA = 40762;
+    public static final String SERVIDOR_REMOTO_HOST = "bore.pub";
+    public static final int PORTA_LOCAL = 5001;
+    public static final int PORTA_REMOTA = 8939;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
