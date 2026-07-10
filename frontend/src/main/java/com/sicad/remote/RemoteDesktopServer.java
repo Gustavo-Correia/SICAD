@@ -67,7 +67,7 @@ public class RemoteDesktopServer {
                                 out.println("ACCEPTED");
                                 iniciarSessao(clientSocket);
                             } else {
-                                out.println("REJECTED:Acesso negado pelo usuário");
+                                out.println("REJECTED:Acesso negado pelo usuario");
                                 clientSocket.close();
                             }
                         } catch (Exception e) {

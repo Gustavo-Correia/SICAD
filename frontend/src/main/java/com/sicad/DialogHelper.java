@@ -78,4 +78,88 @@ public class DialogHelper {
 
         return accepted.get();
     }
+
+    public static void showErrorDialog(String titleStr, String message) {
+        Stage dialog = new Stage();
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        dialog.initStyle(StageStyle.TRANSPARENT);
+
+        VBox root = new VBox(20);
+        root.getStyleClass().add("card");
+        root.setStyle("-fx-background-color: #1E293B; -fx-border-color: #EF4444; -fx-border-width: 1px; -fx-border-radius: 10px; -fx-background-radius: 10px; -fx-effect: dropshadow(three-pass-box, rgba(239,68,68,0.3), 20, 0, 0, 5);");
+        root.setPadding(new Insets(30));
+        root.setPrefWidth(400);
+
+        Label title = new Label(titleStr);
+        title.getStyleClass().add("title");
+        title.setStyle("-fx-font-size: 18px; -fx-text-fill: #EF4444; -fx-font-weight: bold;");
+
+        Label content = new Label(message);
+        content.setWrapText(true);
+        content.setStyle("-fx-font-size: 14px; -fx-text-fill: #E2E8F0;");
+
+        HBox buttonBox = new HBox();
+        buttonBox.setAlignment(Pos.CENTER_RIGHT);
+
+        Button btnAccept = new Button("OK");
+        btnAccept.getStyleClass().add("btn-primary");
+        btnAccept.setOnAction(e -> dialog.close());
+
+        buttonBox.getChildren().add(btnAccept);
+        root.getChildren().addAll(title, content, buttonBox);
+
+        Scene scene = new Scene(root);
+        scene.setFill(Color.TRANSPARENT);
+        
+        java.net.URL cssUrl = Main.class.getResource("/com/sicad/styles.css");
+        if (cssUrl != null) {
+            scene.getStylesheets().add(cssUrl.toExternalForm());
+        }
+
+        dialog.setScene(scene);
+        dialog.centerOnScreen();
+        dialog.showAndWait();
+    }
+
+    public static void showInfoDialog(String titleStr, String message) {
+        Stage dialog = new Stage();
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        dialog.initStyle(StageStyle.TRANSPARENT);
+
+        VBox root = new VBox(20);
+        root.getStyleClass().add("card");
+        root.setStyle("-fx-background-color: #1E293B; -fx-border-color: #3B82F6; -fx-border-width: 1px; -fx-border-radius: 10px; -fx-background-radius: 10px; -fx-effect: dropshadow(three-pass-box, rgba(59,130,246,0.3), 20, 0, 0, 5);");
+        root.setPadding(new Insets(30));
+        root.setPrefWidth(400);
+
+        Label title = new Label(titleStr);
+        title.getStyleClass().add("title");
+        title.setStyle("-fx-font-size: 18px; -fx-text-fill: #3B82F6; -fx-font-weight: bold;");
+
+        Label content = new Label(message);
+        content.setWrapText(true);
+        content.setStyle("-fx-font-size: 14px; -fx-text-fill: #E2E8F0;");
+
+        HBox buttonBox = new HBox();
+        buttonBox.setAlignment(Pos.CENTER_RIGHT);
+
+        Button btnAccept = new Button("OK");
+        btnAccept.getStyleClass().add("btn-primary");
+        btnAccept.setOnAction(e -> dialog.close());
+
+        buttonBox.getChildren().add(btnAccept);
+        root.getChildren().addAll(title, content, buttonBox);
+
+        Scene scene = new Scene(root);
+        scene.setFill(Color.TRANSPARENT);
+        
+        java.net.URL cssUrl = Main.class.getResource("/com/sicad/styles.css");
+        if (cssUrl != null) {
+            scene.getStylesheets().add(cssUrl.toExternalForm());
+        }
+
+        dialog.setScene(scene);
+        dialog.centerOnScreen();
+        dialog.showAndWait();
+    }
 }
