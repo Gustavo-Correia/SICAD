@@ -207,34 +207,70 @@ public class RemoteDesktopClient {
         imageView = new ImageView();
         imageView.setPreserveRatio(true);
 
-        // Cabeçalho de Status superior
+        // Barra de ferramentas flutuante
         HBox header = new HBox(15);
-        header.setStyle("-fx-background-color: #0E1B34; -fx-padding: 10; -fx-alignment: center-left;");
+        header.setStyle("-fx-background-color: rgba(15, 23, 42, 0.85); -fx-padding: 10 20; -fx-background-radius: 30; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 10, 0, 0, 5);");
+        header.setAlignment(Pos.CENTER);
+        header.setMaxWidth(700);
+        header.setMaxHeight(50);
         
-        Label titleLbl = new Label("Sessão Ativa - ID: " + targetId);
-        titleLbl.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px;");
+        // Ícone/Texto de conexão
+        Circle statusDot = new Circle(4, Color.web("#10B981"));
+        Label titleLbl = new Label("Conectado a " + targetId);
+        titleLbl.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-font-family: 'Inter', sans-serif;");
         
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        
+
+        // Botões de Ação
+        Button btnFullscreen = new Button("Tela Cheia");
+        btnFullscreen.setStyle("-fx-background-color: transparent; -fx-text-fill: #94A3B8; -fx-cursor: hand; -fx-font-weight: bold;");
+        btnFullscreen.setOnMouseEntered(e -> btnFullscreen.setStyle("-fx-background-color: rgba(255,255,255,0.1); -fx-text-fill: white; -fx-cursor: hand; -fx-font-weight: bold; -fx-background-radius: 5;"));
+        btnFullscreen.setOnMouseExited(e -> btnFullscreen.setStyle("-fx-background-color: transparent; -fx-text-fill: #94A3B8; -fx-cursor: hand; -fx-font-weight: bold;"));
+        btnFullscreen.setOnAction(e -> stage.setFullScreen(!stage.isFullScreen()));
+
+        Button btnDisconnect = new Button("Desconectar");
+        btnDisconnect.setStyle("-fx-background-color: #EF4444; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 15; -fx-padding: 5 15; -fx-cursor: hand;");
+        btnDisconnect.setOnAction(e -> {
+            disconnect();
+            stage.close();
+        });
+
+        // Ping Badge
+        HBox pingBadge = new HBox(8);
+        pingBadge.setAlignment(Pos.CENTER);
+        pingBadge.setStyle("-fx-background-color: rgba(0,0,0,0.3); -fx-padding: 5 12; -fx-background-radius: 15;");
         pingDot = new Circle(4, Color.web("#A9B4D0"));
         pingLbl = new Label("Ping: --- ms");
-        pingLbl.setStyle("-fx-text-fill: #A9B4D0; -fx-font-size: 13px;");
+        pingLbl.setStyle("-fx-text-fill: #A9B4D0; -fx-font-size: 12px; -fx-font-weight: bold;");
+        pingBadge.getChildren().addAll(pingDot, pingLbl);
         
-        header.getChildren().addAll(titleLbl, spacer, pingDot, pingLbl);
+        header.getChildren().addAll(statusDot, titleLbl, spacer, pingBadge, btnFullscreen, btnDisconnect);
         
         StackPane imageContainer = new StackPane(imageView);
-        VBox.setVgrow(imageContainer, Priority.ALWAYS);
+        imageContainer.setStyle("-fx-background-color: #000000;"); // Fundo preto
         
-        VBox layout = new VBox();
-        layout.getChildren().addAll(header, imageContainer);
+        StackPane root = new StackPane();
+        root.getChildren().addAll(imageContainer, header);
+        StackPane.setAlignment(header, Pos.TOP_CENTER);
+        StackPane.setMargin(header, new javafx.geometry.Insets(20, 0, 0, 0)); // Margem do topo
+
+        // Ocultar a barra quando o mouse sair do topo
+        header.setOpacity(0);
+        root.setOnMouseMoved(e -> {
+            if (e.getY() < 100) {
+                header.setOpacity(1);
+            } else {
+                header.setOpacity(0);
+            }
+        });
         
-        Scene scene = new Scene(layout, 1024, 768);
+        Scene scene = new Scene(root, 1024, 768);
         
         // Responsivo
         imageView.fitWidthProperty().bind(scene.widthProperty());
-        imageView.fitHeightProperty().bind(scene.heightProperty().subtract(40)); // Desconta tamanho do header
- 
+        imageView.fitHeightProperty().bind(scene.heightProperty());
+
         // Eventos de Mouse com mapeamento de coordenadas corrigido (vinculados ao imageContainer)
         imageContainer.setOnMouseMoved(e -> {
             javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
