@@ -60,27 +60,22 @@ public class RemoteDesktopServer {
 
                 // Solicitar permissão na UI thread
                 Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-                    alert.setTitle("Solicitação de Acesso Remoto");
-                    alert.setHeaderText("Conexão Recebida");
-                    alert.setContentText("O dispositivo " + clientId + " deseja controlar sua máquina. Permitir?");
-
-                    alert.showAndWait().ifPresent(response -> {
-                        new Thread(() -> {
-                            try {
-                                if (response == ButtonType.OK) {
-                                    out.println("ACCEPTED");
-                                    iniciarSessao(clientSocket);
-                                } else {
-                                    out.println("REJECTED:Acesso negado pelo usuário");
-                                    clientSocket.close();
-                                }
-                            } catch (Exception e) {
-                                e.printStackTrace();
+                    boolean accepted = com.sicad.DialogHelper.showConnectionRequestDialog(clientId);
+                    new Thread(() -> {
+                        try {
+                            if (accepted) {
+                                out.println("ACCEPTED");
+                                iniciarSessao(clientSocket);
+                            } else {
+                                out.println("REJECTED:Acesso negado pelo usuário");
+                                clientSocket.close();
                             }
-                        }).start();
-                    });
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }).start();
                 });
+
 
             } catch (Exception e) {
                 System.out.println("Erro na conexão remota: " + e.getMessage());

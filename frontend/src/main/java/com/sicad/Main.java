@@ -293,13 +293,7 @@ public class Main extends Application {
                     CountDownLatch latch = new CountDownLatch(1);
                     final boolean[] accepted = {false};
                     Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-                        alert.setTitle("Solicitação de Acesso Remoto");
-                        alert.setHeaderText("Conexão Recebida");
-                        alert.setContentText("O dispositivo " + remoteId + " deseja controlar sua máquina. Permitir?");
-                        alert.showAndWait().ifPresent(response -> {
-                            accepted[0] = response == ButtonType.OK;
-                        });
+                        accepted[0] = com.sicad.DialogHelper.showConnectionRequestDialog(remoteId);
                         latch.countDown();
                     });
                     latch.await();
