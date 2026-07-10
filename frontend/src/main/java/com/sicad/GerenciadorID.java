@@ -49,12 +49,21 @@ public class GerenciadorID {
         String ipLocal = obterIPLocal();
         System.out.println("IP local da máquina: " + ipLocal);
 
+        String idSalvo = GerenciadorConfiguracoes.obterIdSalvo();
+        if (!idSalvo.isBlank()) {
+            System.out.println("ID carregado localmente: " + idSalvo);
+            // Atualizar o IP deste ID no servidor
+            conexao.enviarComando("REGISTER_ID:" + ipLocal + ":" + idSalvo);
+            return idSalvo;
+        }
+
         // 1. Consultar servidor pelo IP
         String resposta = conexao.enviarComando("GET_ID:" + ipLocal);
 
         if (resposta != null && resposta.startsWith("ID:")) {
             String idExistente = resposta.substring(3).trim();
             System.out.println("ID encontrado no servidor: " + idExistente);
+            GerenciadorConfiguracoes.salvarId(idExistente);
             return idExistente;
         }
 
@@ -63,6 +72,9 @@ public class GerenciadorID {
         // 2. Gerar novo ID
         String novoID = gerarNovoID();
         System.out.println("Novo ID gerado: " + novoID);
+        
+        // Salvar localmente
+        GerenciadorConfiguracoes.salvarId(novoID);
 
         // 3. Registrar no servidor
         resposta = conexao.enviarComando("REGISTER_ID:" + ipLocal + ":" + novoID);

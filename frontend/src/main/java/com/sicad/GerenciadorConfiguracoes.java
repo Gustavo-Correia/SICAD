@@ -29,7 +29,7 @@ public class GerenciadorConfiguracoes {
     }
 
     public static void salvarConfiguracoes(String host, String port, String localPort, String fps, String quality) {
-        Properties props = new Properties();
+        Properties props = carregarConfiguracoes();
         props.setProperty("server.host", host);
         props.setProperty("server.port", port);
         props.setProperty("local.port", localPort);
@@ -40,6 +40,20 @@ public class GerenciadorConfiguracoes {
             props.store(out, "Configuracoes SICAD");
         } catch (Exception e) {
             System.out.println("Erro ao salvar configurações: " + e.getMessage());
+        }
+    }
+
+    public static String obterIdSalvo() {
+        return carregarConfiguracoes().getProperty("client.id", "");
+    }
+
+    public static void salvarId(String id) {
+        Properties props = carregarConfiguracoes();
+        props.setProperty("client.id", id);
+        try (FileOutputStream out = new FileOutputStream(FILE_PATH)) {
+            props.store(out, "Configuracoes SICAD");
+        } catch (Exception e) {
+            System.out.println("Erro ao salvar ID: " + e.getMessage());
         }
     }
 }
