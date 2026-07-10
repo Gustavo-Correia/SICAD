@@ -54,6 +54,7 @@ public class Main extends Application {
     private ConexaoServidor conexaoServidor;
     private Circle statusDot;
     private Label statusText;
+    private Button btnReconnect;
     private Label idLabel;
     private String meuID;
     
@@ -159,15 +160,29 @@ public class Main extends Application {
     } 
 
     public void atualizarStatusConexao(boolean conectado) {
-        if (statusDot != null && statusText != null) {
-            if (conectado) {
-                statusDot.setFill(Color.web("#10B981"));
-                statusText.setText("Online");
-            } else {
-                statusDot.setFill(Color.web("#EF4444"));
-                statusText.setText("Offline");
+        Platform.runLater(() -> {
+            if (statusDot != null && statusText != null) {
+                if (conectado) {
+                    statusDot.setFill(Color.web("#10B981"));
+                    statusText.setText("Online");
+                    if (btnReconnect != null) {
+                        btnReconnect.setVisible(false);
+                        btnReconnect.setManaged(false);
+                        btnReconnect.setDisable(false);
+                        btnReconnect.setText("Reconectar");
+                    }
+                } else {
+                    statusDot.setFill(Color.web("#EF4444"));
+                    statusText.setText("Offline");
+                    if (btnReconnect != null) {
+                        btnReconnect.setVisible(true);
+                        btnReconnect.setManaged(true);
+                        btnReconnect.setDisable(false);
+                        btnReconnect.setText("Reconectar");
+                    }
+                }
             }
-        }
+        });
     }
 
     /**
@@ -423,15 +438,38 @@ public class Main extends Application {
         });
 
         // Status Indicator
+        VBox statusContainer = new VBox(5);
+        statusContainer.setAlignment(Pos.CENTER_RIGHT);
+
         HBox statusBox = new HBox(8);
-        statusBox.setAlignment(Pos.CENTER);
+        statusBox.setAlignment(Pos.CENTER_RIGHT);
 
         statusDot = new Circle(4, Color.web("#10B981"));
         statusText = new Label("Conectado");
         statusText.getStyleClass().add("text-secondary");
         statusBox.getChildren().addAll(statusDot, statusText);
 
-        header.getChildren().addAll(logo, titles, createSpacer(), themeSelector, statusBox);
+        btnReconnect = new Button("Reconectar");
+        btnReconnect.getStyleClass().add("btn-secondary");
+        btnReconnect.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
+        btnReconnect.setVisible(false);
+        btnReconnect.setManaged(false);
+        btnReconnect.setOnAction(e -> {
+            btnReconnect.setDisable(true);
+            btnReconnect.setText("Conectando...");
+            new Thread(() -> {
+                conexaoServidor.conectarComFallback(
+                        "127.0.0.1", PORTA_LOCAL,
+                        SERVIDOR_REMOTO_HOST, PORTA_REMOTA
+                );
+                inicializarID();
+                carregarEstatisticasDispositivos();
+            }).start();
+        });
+
+        statusContainer.getChildren().addAll(statusBox, btnReconnect);
+
+        header.getChildren().addAll(logo, titles, createSpacer(), themeSelector, statusContainer);
         return header;
     }
 
