@@ -606,6 +606,26 @@ public class Main extends Application {
         idInput.getStyleClass().add("input-modern");
         idInput.setMaxWidth(400);
 
+        idInput.textProperty().addListener((obs, oldText, newText) -> {
+            if (newText.equals(oldText)) return;
+            
+            String plain = newText.toUpperCase().replaceAll("[^A-Z0-9]", "");
+            if (plain.length() > 11) {
+                plain = plain.substring(0, 11);
+            }
+            
+            StringBuilder formatted = new StringBuilder(plain);
+            if (plain.length() > 8) {
+                formatted.insert(8, "-");
+            }
+            
+            String finalText = formatted.toString();
+            if (!newText.equals(finalText)) {
+                idInput.setText(finalText);
+                idInput.positionCaret(finalText.length()); // Manter cursor no final
+            }
+        });
+
         Button connectBtn = new Button("Conectar");
         connectBtn.getStyleClass().add("btn-primary");
         connectBtn.setPrefWidth(200);
