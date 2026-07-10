@@ -320,7 +320,7 @@ public class Main extends Application {
                         caster.stopCasting();
                         System.out.println("Sessão remota encerrada via relay.");
                     } else {
-                        os.write("REJECTED:Acesso negado pelo usuÃ¡rio\n".getBytes());
+                        os.write("REJECTED:Acesso negado pelo usuario\n".getBytes());
                         os.flush();
                     }
 
