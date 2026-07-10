@@ -38,9 +38,9 @@ public class Main extends Application {
     public static final boolean SHOW_CONSOLE = false;
 
     /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
-    public static final String SERVIDOR_REMOTO_HOST = "bore.pub";
-    public static final int PORTA_LOCAL = 5001;
-    public static final int PORTA_REMOTA = 19664;
+    public static String SERVIDOR_REMOTO_HOST = "bore.pub";
+    public static int PORTA_LOCAL = 5001;
+    public static int PORTA_REMOTA = 19664;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
@@ -58,9 +58,23 @@ public class Main extends Application {
     private volatile Socket relaySocket;
     private TextField idInput;
     private FlowPane recentsGrid;
+    private Label labelConexoesHoje;
+    private Label labelDispositivos;
+    private Label labelUltimoAcesso;
+    private ScrollPane centerScrollPane;
+    private List<StackPane> sidebarButtons = new java.util.ArrayList<>();
 
     @Override
     public void start(Stage stage) {
+        try {
+            java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
+            SERVIDOR_REMOTO_HOST = props.getProperty("server.host", "bore.pub");
+            PORTA_REMOTA = Integer.parseInt(props.getProperty("server.port", "19664"));
+            PORTA_LOCAL = Integer.parseInt(props.getProperty("local.port", "5001"));
+        } catch (Exception e) {
+            System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());
+        }
+
         if (SHOW_CONSOLE) {
             Kernel32.INSTANCE.AllocConsole();
             try {
@@ -86,11 +100,11 @@ public class Main extends Application {
         root.setTop(topArea);
 
         // 3. Main Content (Center)
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.getStyleClass().add("scroll-pane");
-        scrollPane.setContent(createDashboardContent());
-        root.setCenter(scrollPane);
+        centerScrollPane = new ScrollPane();
+        centerScrollPane.setFitToWidth(true);
+        centerScrollPane.getStyleClass().add("scroll-pane");
+        centerScrollPane.setContent(createDashboardContent());
+        root.setCenter(centerScrollPane);
 
         Scene scene = new Scene(root, 1400, 850);
         java.net.URL cssUrl = getClass().getResource("styles.css");
@@ -124,6 +138,7 @@ public class Main extends Application {
 
         // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
+        carregarEstatisticasDispositivos();
     }
 
     @Override
@@ -190,6 +205,34 @@ public class Main extends Application {
 
             iniciarRelayHost(id);
         }, "inicializar-id").start();
+    }
+
+    private void carregarEstatisticasDispositivos() {
+        new Thread(() -> {
+            int tentativas = 0;
+            while (!conexaoServidor.isConectado() && tentativas < 60) {
+                try { Thread.sleep(250); } catch (InterruptedException e) { break; }
+                tentativas++;
+            }
+
+            if (!conexaoServidor.isConectado()) {
+                return;
+            }
+
+            try {
+                String resp = conexaoServidor.enviarComando("GET_DEVICE_COUNT:ALL");
+                if (resp != null && resp.startsWith("COUNT:")) {
+                    String count = resp.substring(6).trim();
+                    Platform.runLater(() -> {
+                        if (labelDispositivos != null) {
+                            labelDispositivos.setText(count);
+                        }
+                    });
+                }
+            } catch (Exception e) {
+                System.out.println("Erro ao obter estatísticas de dispositivos: " + e.getMessage());
+            }
+        }, "carregar-stats").start();
     }
 
     private void iniciarRelayHost(String id) {
@@ -287,6 +330,8 @@ public class Main extends Application {
         sidebar.setPrefWidth(70);
         sidebar.setAlignment(Pos.TOP_CENTER);
 
+        sidebarButtons.clear();
+
         // Icons SVG Paths
         String homeIcon = "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z";
         String linkIcon = "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z";
@@ -295,12 +340,12 @@ public class Main extends Application {
         String settingsIcon = "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z";
 
         sidebar.getChildren().addAll(
-                createSidebarButton(homeIcon, true),
-                createSidebarButton(linkIcon, false),
-                createSidebarButton(starIcon, false),
-                createSidebarButton(clockIcon, false),
+                createSidebarButton(homeIcon, true, () -> exibirDashboard()),
+                createSidebarButton(linkIcon, false, null),
+                createSidebarButton(starIcon, false, null),
+                createSidebarButton(clockIcon, false, null),
                 createSpacer(),
-                createSidebarButton(settingsIcon, false)
+                createSidebarButton(settingsIcon, false, () -> exibirConfiguracoes())
         );
 
         return sidebar;
@@ -313,7 +358,7 @@ public class Main extends Application {
         return spacer;
     }
 
-    private StackPane createSidebarButton(String svg, boolean isActive) {
+    private StackPane createSidebarButton(String svg, boolean isActive, Runnable onClick) {
         StackPane btn = new StackPane();
         btn.getStyleClass().add("sidebar-btn");
         if (isActive) btn.getStyleClass().add("active");
@@ -323,6 +368,16 @@ public class Main extends Application {
         path.getStyleClass().add("sidebar-icon");
         
         btn.getChildren().add(path);
+        btn.setOnMouseClicked(e -> {
+            for (StackPane b : sidebarButtons) {
+                b.getStyleClass().remove("active");
+            }
+            btn.getStyleClass().add("active");
+            if (onClick != null) {
+                onClick.run();
+            }
+        });
+        sidebarButtons.add(btn);
         return btn;
     }
 
@@ -416,11 +471,15 @@ public class Main extends Application {
         infoTitle.getStyleClass().add("title");
         infoTitle.setStyle("-fx-font-size: 18px;");
 
+        labelConexoesHoje = new Label(String.valueOf(GerenciadorEstatisticas.obterConexoesHoje()));
+        labelDispositivos = new Label("...");
+        labelUltimoAcesso = new Label(GerenciadorEstatisticas.obterUltimoAcesso());
+
         HBox statsGrid = new HBox(20);
         statsGrid.getChildren().addAll(
-            createStatCard("Conexões Hoje", "12"),
-            createStatCard("Dispositivos", "25"),
-            createStatCard("Último Acesso", "Hoje 14:32")
+            createStatCard("Conexões Hoje", labelConexoesHoje),
+            createStatCard("Dispositivos", labelDispositivos),
+            createStatCard("Último Acesso", labelUltimoAcesso)
         );
         infoSection.getChildren().addAll(infoTitle, statsGrid);
 
@@ -494,7 +553,17 @@ public class Main extends Application {
 
             // Salva no histórico de conexões recentes e atualiza o painel
             GerenciadorHistorico.adicionarConexao(targetId);
-            Platform.runLater(this::atualizarRecentes);
+            GerenciadorEstatisticas.registrarAcesso();
+            
+            Platform.runLater(() -> {
+                atualizarRecentes();
+                if (labelConexoesHoje != null) {
+                    labelConexoesHoje.setText(String.valueOf(GerenciadorEstatisticas.obterConexoesHoje()));
+                }
+                if (labelUltimoAcesso != null) {
+                    labelUltimoAcesso.setText(GerenciadorEstatisticas.obterUltimoAcesso());
+                }
+            });
 
             connectBtn.setDisable(true);
             connectBtn.setText("Conectando...");
@@ -572,7 +641,7 @@ public class Main extends Application {
         return card;
     }
 
-    private VBox createStatCard(String title, String value) {
+    private VBox createStatCard(String title, Label valLbl) {
         VBox card = new VBox(5);
         card.getStyleClass().add("session-card"); // reusing simple card style
         card.setPrefWidth(200);
@@ -581,12 +650,177 @@ public class Main extends Application {
         Label titleLbl = new Label(title);
         titleLbl.getStyleClass().add("text-secondary");
 
-        Label valLbl = new Label(value);
         valLbl.getStyleClass().add("text-primary");
         valLbl.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
 
         card.getChildren().addAll(titleLbl, valLbl);
         return card;
+    }
+
+    private void exibirDashboard() {
+        if (centerScrollPane != null) {
+            centerScrollPane.setContent(createDashboardContent());
+        }
+    }
+
+    private void exibirConfiguracoes() {
+        if (centerScrollPane != null) {
+            centerScrollPane.setContent(createConfiguracoesContent());
+        }
+    }
+
+    private VBox createConfiguracoesContent() {
+        VBox content = new VBox(25);
+        content.setPadding(new Insets(30));
+        content.getStyleClass().add("content-area");
+
+        Label mainTitle = new Label("Configurações do Sistema");
+        mainTitle.getStyleClass().add("title");
+        mainTitle.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
+
+        java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
+
+        // Seção 1: Rede
+        VBox redeSection = new VBox(15);
+        redeSection.getStyleClass().add("card");
+        redeSection.setPadding(new Insets(20));
+
+        Label redeTitle = new Label("Parâmetros de Rede");
+        redeTitle.getStyleClass().add("subtitle");
+        redeTitle.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+
+        GridPane redeGrid = new GridPane();
+        redeGrid.setHgap(15);
+        redeGrid.setVgap(12);
+
+        Label hostLabel = new Label("Servidor Central (Host):");
+        hostLabel.getStyleClass().add("text-secondary");
+        TextField hostInput = new TextField(props.getProperty("server.host"));
+        hostInput.getStyleClass().add("input-modern");
+        hostInput.setPrefWidth(300);
+
+        Label portLabel = new Label("Porta do Servidor Central:");
+        portLabel.getStyleClass().add("text-secondary");
+        TextField portInput = new TextField(props.getProperty("server.port"));
+        portInput.getStyleClass().add("input-modern");
+        portInput.setPrefWidth(300);
+
+        Label localPortLabel = new Label("Porta Local (Nginx Bridge):");
+        localPortLabel.getStyleClass().add("text-secondary");
+        TextField localPortInput = new TextField(props.getProperty("local.port"));
+        localPortInput.getStyleClass().add("input-modern");
+        localPortInput.setPrefWidth(300);
+
+        redeGrid.add(hostLabel, 0, 0);
+        redeGrid.add(hostInput, 1, 0);
+        redeGrid.add(portLabel, 0, 1);
+        redeGrid.add(portInput, 1, 1);
+        redeGrid.add(localPortLabel, 0, 2);
+        redeGrid.add(localPortInput, 1, 2);
+
+        redeSection.getChildren().addAll(redeTitle, redeGrid);
+
+        // Seção 2: Caster Video
+        VBox casterSection = new VBox(15);
+        casterSection.getStyleClass().add("card");
+        casterSection.setPadding(new Insets(20));
+
+        Label casterTitle = new Label("Otimizações de Transmissão de Vídeo");
+        casterTitle.getStyleClass().add("subtitle");
+        casterTitle.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+
+        GridPane casterGrid = new GridPane();
+        casterGrid.setHgap(15);
+        casterGrid.setVgap(12);
+
+        Label fpsLabel = new Label("Taxa de Quadros Limite (FPS):");
+        fpsLabel.getStyleClass().add("text-secondary");
+        
+        Slider fpsSlider = new Slider(5, 30, Double.parseDouble(props.getProperty("caster.fps", "15")));
+        fpsSlider.setShowTickLabels(true);
+        fpsSlider.setShowTickMarks(true);
+        fpsSlider.setMajorTickUnit(5);
+        fpsSlider.setMinorTickCount(0);
+        fpsSlider.setSnapToTicks(true);
+        fpsSlider.setPrefWidth(300);
+        
+        Label fpsValLabel = new Label(((int) fpsSlider.getValue()) + " FPS");
+        fpsValLabel.getStyleClass().add("text-primary");
+        fpsValLabel.setStyle("-fx-font-weight: bold;");
+        fpsSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            fpsValLabel.setText(newVal.intValue() + " FPS");
+        });
+
+        Label qualityLabel = new Label("Qualidade de Compactação JPEG:");
+        qualityLabel.getStyleClass().add("text-secondary");
+        
+        double currentQuality = Double.parseDouble(props.getProperty("caster.quality", "0.55")) * 100;
+        Slider qualitySlider = new Slider(10, 100, currentQuality);
+        qualitySlider.setShowTickLabels(true);
+        qualitySlider.setShowTickMarks(true);
+        qualitySlider.setMajorTickUnit(20);
+        qualitySlider.setPrefWidth(300);
+        
+        Label qualityValLabel = new Label(((int) qualitySlider.getValue()) + "%");
+        qualityValLabel.getStyleClass().add("text-primary");
+        qualityValLabel.setStyle("-fx-font-weight: bold;");
+        qualitySlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            qualityValLabel.setText(newVal.intValue() + "%");
+        });
+
+        casterGrid.add(fpsLabel, 0, 0);
+        casterGrid.add(fpsSlider, 1, 0);
+        casterGrid.add(fpsValLabel, 2, 0);
+        
+        casterGrid.add(qualityLabel, 0, 1);
+        casterGrid.add(qualitySlider, 1, 1);
+        casterGrid.add(qualityValLabel, 2, 1);
+
+        casterSection.getChildren().addAll(casterTitle, casterGrid);
+
+        // Botão Salvar
+        HBox buttonBox = new HBox(15);
+        buttonBox.setAlignment(Pos.CENTER_LEFT);
+
+        Button saveBtn = new Button("Salvar Alterações");
+        saveBtn.getStyleClass().add("btn-primary");
+        saveBtn.setPrefWidth(200);
+
+        Label saveMsg = new Label("");
+        saveMsg.setStyle("-fx-text-fill: #10B981; -fx-font-weight: bold;");
+
+        saveBtn.setOnAction(e -> {
+            try {
+                String host = hostInput.getText().trim();
+                String portStr = portInput.getText().trim();
+                String localPortStr = localPortInput.getText().trim();
+                int fps = (int) fpsSlider.getValue();
+                float quality = (float) (qualitySlider.getValue() / 100.0);
+
+                if (host.isEmpty() || portStr.isEmpty() || localPortStr.isEmpty()) {
+                    saveMsg.setText("Erro: Preencha todos os campos.");
+                    saveMsg.setStyle("-fx-text-fill: #EF4444;");
+                    return;
+                }
+
+                GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr, localPortStr, String.valueOf(fps), String.valueOf(quality));
+
+                SERVIDOR_REMOTO_HOST = host;
+                PORTA_REMOTA = Integer.parseInt(portStr);
+                PORTA_LOCAL = Integer.parseInt(localPortStr);
+
+                saveMsg.setText("Configurações salvas com sucesso!");
+                saveMsg.setStyle("-fx-text-fill: #10B981;");
+            } catch (Exception ex) {
+                saveMsg.setText("Erro ao salvar: " + ex.getMessage());
+                saveMsg.setStyle("-fx-text-fill: #EF4444;");
+            }
+        });
+
+        buttonBox.getChildren().addAll(saveBtn, saveMsg);
+
+        content.getChildren().addAll(mainTitle, redeSection, casterSection, buttonBox);
+        return content;
     }
 
     public static void main(String[] args) {

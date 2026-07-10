@@ -18,14 +18,23 @@ public class ScreenCaster implements Runnable {
     private volatile boolean running = true;
     private BufferedImage lastFrame = null;
     
-    // Qualidade de compactação JPEG (0.0 a 1.0). 0.5f fornece excelente balanço velocidade/qualidade
-    private static final float COMPRESSION_QUALITY = 0.55f;
-    private static final int MAX_FPS = 15;
-    private static final int TARGET_DELAY_MS = 1000 / MAX_FPS; // ~66ms por frame
+    // Qualidade de compactação JPEG (0.0 a 1.0) e FPS dinâmicos
+    private float compressionQuality = 0.55f;
+    private int maxFps = 15;
+    private int targetDelayMs = 1000 / maxFps; // ~66ms por frame
 
     public ScreenCaster(DataOutputStream out, Robot robot) {
         this.out = out;
         this.robot = robot;
+        
+        try {
+            java.util.Properties props = com.sicad.GerenciadorConfiguracoes.carregarConfiguracoes();
+            this.maxFps = Integer.parseInt(props.getProperty("caster.fps", "15"));
+            this.targetDelayMs = 1000 / this.maxFps;
+            this.compressionQuality = Float.parseFloat(props.getProperty("caster.quality", "0.55"));
+        } catch (Exception e) {
+            System.out.println("Erro ao carregar configurações no ScreenCaster: " + e.getMessage());
+        }
     }
 
     public void stopCasting() {
@@ -39,7 +48,7 @@ public class ScreenCaster implements Runnable {
             ImageWriter writer = ImageIO.getImageWritersByFormatName("jpg").next();
             ImageWriteParam param = writer.getDefaultWriteParam();
             param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-            param.setCompressionQuality(COMPRESSION_QUALITY);
+            param.setCompressionQuality(compressionQuality);
 
             while (running) {
                 long startTime = System.currentTimeMillis();
@@ -49,7 +58,7 @@ public class ScreenCaster implements Runnable {
                 if (isFrameSimilar(capture, lastFrame)) {
                     // Espera o tempo restante do frame rate
                     long elapsed = System.currentTimeMillis() - startTime;
-                    long sleepTime = TARGET_DELAY_MS - elapsed;
+                    long sleepTime = targetDelayMs - elapsed;
                     if (sleepTime > 0) {
                         Thread.sleep(sleepTime);
                     }
@@ -73,7 +82,7 @@ public class ScreenCaster implements Runnable {
                 
                 // Controle preciso de taxa de quadros (FPS)
                 long elapsed = System.currentTimeMillis() - startTime;
-                long sleepTime = TARGET_DELAY_MS - elapsed;
+                long sleepTime = targetDelayMs - elapsed;
                 if (sleepTime > 0) {
                     Thread.sleep(sleepTime);
                 }

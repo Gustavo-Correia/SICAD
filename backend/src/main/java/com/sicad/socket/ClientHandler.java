@@ -225,6 +225,7 @@ public class ClientHandler implements Runnable {
                 case "REGISTER_ID"  -> handleRegisterId(parts);
                 case "GET_ID"       -> handleGetId(parts);
                 case "LOOKUP"       -> handleLookup(parts);
+                case "GET_DEVICE_COUNT" -> handleGetDeviceCount(parts);
                 default             -> "ERRO:Comando desconhecido";
             };
         } catch (Exception e) {
@@ -269,6 +270,11 @@ public class ClientHandler implements Runnable {
         String clientId = parts[1];
         String storedIp = ClientService.getClientIp(clientId);
         return storedIp != null ? "IP:" + storedIp : "NOT_FOUND";
+    }
+
+    private String handleGetDeviceCount(String[] parts) throws Exception {
+        int count = ClientService.getDeviceCount();
+        return "COUNT:" + count;
     }
 
     private void fecharSocket() {
