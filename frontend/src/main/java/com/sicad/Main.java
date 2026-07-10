@@ -621,8 +621,10 @@ public class Main extends Application {
             
             String finalText = formatted.toString();
             if (!newText.equals(finalText)) {
-                idInput.setText(finalText);
-                idInput.positionCaret(finalText.length()); // Manter cursor no final
+                javafx.application.Platform.runLater(() -> {
+                    idInput.setText(finalText);
+                    idInput.positionCaret(finalText.length()); // Manter cursor no final
+                });
             }
         });
 
