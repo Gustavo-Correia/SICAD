@@ -374,6 +374,8 @@ public class Main extends Application {
         path.getStyleClass().add("sidebar-icon");
         
         Tooltip tooltip = new Tooltip(tooltipText);
+        tooltip.setShowDelay(javafx.util.Duration.millis(200));
+        tooltip.setStyle("-fx-font-size: 13px; -fx-background-color: #1E293B; -fx-text-fill: #E2E8F0; -fx-padding: 6px 12px; -fx-background-radius: 4px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 4);");
         Tooltip.install(btn, tooltip);
         
         btn.getChildren().add(path);
