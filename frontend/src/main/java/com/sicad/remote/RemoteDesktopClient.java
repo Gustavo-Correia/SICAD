@@ -18,6 +18,8 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.control.Label;
+import javafx.scene.control.Button;
+import javafx.geometry.Pos;
 import javafx.scene.input.*;
 import java.io.File;
 import java.util.List;
