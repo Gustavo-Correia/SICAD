@@ -82,6 +82,7 @@ public class ClientHandler implements Runnable {
 
     private void handleRelayRegister(String relayId) throws Exception {
         RelayManager.register(relayId, socket);
+        ClientService.registerClient(relayId, clientIp);
         try {
             while (!Thread.interrupted() && !socket.isClosed()) {
                 Thread.sleep(1000);
