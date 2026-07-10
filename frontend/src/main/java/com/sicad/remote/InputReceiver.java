@@ -4,20 +4,35 @@ import java.awt.Robot;
 import java.awt.event.InputEvent;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.DataOutputStream;
 import java.net.Socket;
 
 public class InputReceiver implements Runnable {
     private final Socket socket;
+    private final DataOutputStream dataOut;
     private final Robot robot;
     private volatile boolean running = true;
+    private ClipboardSync clipboardSync;
+
+    public InputReceiver(Socket socket, DataOutputStream dataOut, Robot robot) {
+        this.socket = socket;
+        this.dataOut = dataOut;
+        this.robot = robot;
+        this.clipboardSync = new ClipboardSync(null, dataOut, true);
+    }
 
     public InputReceiver(Socket socket, Robot robot) {
         this.socket = socket;
+        this.dataOut = null;
         this.robot = robot;
+        this.clipboardSync = null;
     }
 
     public void stopReceiving() {
         this.running = false;
+        if (clipboardSync != null) {
+            clipboardSync.stop();
+        }
     }
 
     @Override
@@ -33,16 +48,31 @@ public class InputReceiver implements Runnable {
     }
 
     private void processCommand(String command) {
-        String[] parts = command.split(":");
+        String[] parts = command.split(":", 2); // Split em 2 partes apenas para preservar o conteúdo do texto do clipboard contendo ':'
         if (parts.length == 0) return;
 
         try {
             switch (parts[0]) {
+                case "PING_CHECK":
+                    if (parts.length >= 2) {
+                        long ts = Long.parseLong(parts[1]);
+                        ScreenCaster.enviarPong(dataOut, ts);
+                    }
+                    break;
+                case "CLIPBOARD_SYNC":
+                    if (parts.length >= 2 && clipboardSync != null) {
+                        String unescaped = parts[1].replace("\\n", "\n").replace("\\r", "\r");
+                        clipboardSync.aplicarTextoRemoto(unescaped);
+                    }
+                    break;
                 case "MOUSE_MOVE":
-                    if (parts.length >= 3) {
-                        int x = Integer.parseInt(parts[1]);
-                        int y = Integer.parseInt(parts[2]);
-                        robot.mouseMove(x, y);
+                    if (parts.length >= 2) {
+                        String[] coords = parts[1].split(":");
+                        if (coords.length >= 2) {
+                            int x = Integer.parseInt(coords[0]);
+                            int y = Integer.parseInt(coords[1]);
+                            robot.mouseMove(x, y);
+                        }
                     }
                     break;
                 case "MOUSE_PRESS":

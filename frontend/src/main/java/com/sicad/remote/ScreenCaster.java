@@ -75,10 +75,12 @@ public class ScreenCaster implements Runnable {
 
                 byte[] imageBytes = baos.toByteArray();
                 
-                // Envia o tamanho da imagem, seguido dos bytes
-                out.writeInt(imageBytes.length);
-                out.write(imageBytes);
-                out.flush();
+                // Envia de forma sincronizada para evitar misturar com pacotes de controle
+                synchronized (out) {
+                    out.writeInt(imageBytes.length);
+                    out.write(imageBytes);
+                    out.flush();
+                }
                 
                 // Controle preciso de taxa de quadros (FPS)
                 long elapsed = System.currentTimeMillis() - startTime;
@@ -90,6 +92,32 @@ public class ScreenCaster implements Runnable {
             writer.dispose();
         } catch (Exception e) {
             System.out.println("ScreenCaster encerrado: " + e.getMessage());
+        }
+    }
+
+    public static void enviarPong(DataOutputStream out, long timestamp) {
+        try {
+            synchronized (out) {
+                out.writeInt(-1); // Header especial para Ping RTT
+                out.writeLong(timestamp);
+                out.flush();
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao enviar PONG: " + e.getMessage());
+        }
+    }
+
+    public static void enviarClipboard(DataOutputStream out, String texto) {
+        try {
+            synchronized (out) {
+                byte[] bytes = texto.getBytes("UTF-8");
+                out.writeInt(-2); // Header especial para Clipboard
+                out.writeInt(bytes.length);
+                out.write(bytes);
+                out.flush();
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao enviar Clipboard: " + e.getMessage());
         }
     }
 

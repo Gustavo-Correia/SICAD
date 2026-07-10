@@ -1,9 +1,7 @@
 package com.sicad.remote;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
-import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 import javafx.application.Platform;
@@ -13,31 +11,41 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
+import javafx.scene.shape.Circle;
+import javafx.scene.paint.Color;
+import javafx.scene.layout.VBox;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.control.Label;
+import javafx.scene.input.*;
+import java.io.File;
+import java.util.List;
 
 public class RemoteDesktopClient {
     private final String targetHost;
     private final int targetPort;
     private final String localId;
     private final String targetId;
-    private final boolean useRelay;
     private Socket socket;
     private PrintWriter out;
     private volatile boolean running = true;
+    private Circle pingDot;
+    private Label pingLbl;
+    private ClipboardSync clipboardSync;
 
     public RemoteDesktopClient(String targetId, String localId) {
         this.targetId = targetId;
         this.localId = localId;
-        this.useRelay = true;
         this.targetHost = null;
         this.targetPort = 0;
     }
 
-    public RemoteDesktopClient(String targetIp, int targetPort, String localId) {
-        this.targetHost = targetIp;
-        this.targetPort = targetPort;
-        this.localId = localId;
+    public RemoteDesktopClient(String host, int port) {
+        this.targetHost = host;
+        this.targetPort = port;
         this.targetId = null;
-        this.useRelay = false;
+        this.localId = null;
     }
 
     public void connectRelay(String serverHost, int serverPort) {
@@ -198,37 +206,58 @@ public class RemoteDesktopClient {
         
         imageView = new ImageView();
         imageView.setPreserveRatio(true);
+
+        // Cabeçalho de Status superior
+        HBox header = new HBox(15);
+        header.setStyle("-fx-background-color: #0E1B34; -fx-padding: 10; -fx-alignment: center-left;");
         
-        StackPane root = new StackPane(imageView);
-        Scene scene = new Scene(root, 1024, 768);
+        Label titleLbl = new Label("Sessão Ativa - ID: " + targetId);
+        titleLbl.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px;");
+        
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        
+        pingDot = new Circle(4, Color.web("#A9B4D0"));
+        pingLbl = new Label("Ping: --- ms");
+        pingLbl.setStyle("-fx-text-fill: #A9B4D0; -fx-font-size: 13px;");
+        
+        header.getChildren().addAll(titleLbl, spacer, pingDot, pingLbl);
+        
+        StackPane imageContainer = new StackPane(imageView);
+        VBox.setVgrow(imageContainer, Priority.ALWAYS);
+        
+        VBox layout = new VBox();
+        layout.getChildren().addAll(header, imageContainer);
+        
+        Scene scene = new Scene(layout, 1024, 768);
         
         // Responsivo
         imageView.fitWidthProperty().bind(scene.widthProperty());
-        imageView.fitHeightProperty().bind(scene.heightProperty());
+        imageView.fitHeightProperty().bind(scene.heightProperty().subtract(40)); // Desconta tamanho do header
  
-        // Eventos de Mouse com mapeamento de coordenadas corrigido
-        scene.setOnMouseMoved(e -> {
+        // Eventos de Mouse com mapeamento de coordenadas corrigido (vinculados ao imageContainer)
+        imageContainer.setOnMouseMoved(e -> {
             javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
             if (mapped != null) {
                 sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
         });
  
-        scene.setOnMouseDragged(e -> {
+        imageContainer.setOnMouseDragged(e -> {
             javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
             if (mapped != null) {
                 sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
         });
  
-        scene.setOnMousePressed(e -> {
+        imageContainer.setOnMousePressed(e -> {
             int button = 1; // Left
             if (e.isSecondaryButtonDown()) button = 3; // Right
             else if (e.isMiddleButtonDown()) button = 2; // Middle
             sendCommand("MOUSE_PRESS:" + button);
         });
  
-        scene.setOnMouseReleased(e -> {
+        imageContainer.setOnMouseReleased(e -> {
             int button = 1;
             if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) button = 3;
             else if (e.getButton() == javafx.scene.input.MouseButton.MIDDLE) button = 2;
@@ -245,6 +274,15 @@ public class RemoteDesktopClient {
             int keyCode = e.getCode().getCode();
             sendCommand("KEY_RELEASE:" + keyCode);
         });
+
+        // Configura ClipboardSync no Viewer
+        clipboardSync = new ClipboardSync(out, null, false);
+
+        // Inicia Ping Heartbeat
+        startPingHeartbeat();
+
+        // Configura Drag & Drop de arquivos
+        configurarDragAndDrop(imageContainer);
  
         stage.setOnCloseRequest(e -> disconnect());
         stage.setScene(scene);
@@ -267,6 +305,20 @@ public class RemoteDesktopClient {
                                 adjustStageSize(img);
                             }
                         });
+                    } else if (length == -1) {
+                        // Resposta do Ping RTT
+                        long originalTimestamp = dataIn.readLong();
+                        long rtt = System.currentTimeMillis() - originalTimestamp;
+                        atualizarPing(rtt);
+                    } else if (length == -2) {
+                        // Sincronização do Clipboard vindo do Host
+                        int textLen = dataIn.readInt();
+                        byte[] textBytes = new byte[textLen];
+                        dataIn.readFully(textBytes);
+                        String text = new String(textBytes, "UTF-8");
+                        if (clipboardSync != null) {
+                            clipboardSync.aplicarTextoRemoto(text);
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -287,8 +339,71 @@ public class RemoteDesktopClient {
         }
     }
 
+    private void startPingHeartbeat() {
+        new Thread(() -> {
+            while (running && socket != null && !socket.isClosed()) {
+                try {
+                    sendCommand("PING_CHECK:" + System.currentTimeMillis());
+                    Thread.sleep(2000); // Checa latência a cada 2 segundos
+                } catch (Exception e) {
+                    break;
+                }
+            }
+        }, "viewer-ping-heartbeat").start();
+    }
+
+    private void atualizarPing(long rtt) {
+        Platform.runLater(() -> {
+            if (pingLbl != null && pingDot != null) {
+                pingLbl.setText("Ping: " + rtt + " ms");
+                if (rtt < 70) {
+                    pingDot.setFill(Color.web("#10B981")); // Verde
+                } else if (rtt < 180) {
+                    pingDot.setFill(Color.web("#F59E0B")); // Amarelo
+                } else {
+                    pingDot.setFill(Color.web("#EF4444")); // Vermelho
+                }
+            }
+        });
+    }
+
+    private void configurarDragAndDrop(StackPane container) {
+        container.setOnDragOver(event -> {
+            Dragboard db = event.getDragboard();
+            if (db.hasFiles()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+
+        container.setOnDragDropped(event -> {
+            Dragboard db = event.getDragboard();
+            boolean success = false;
+            if (db.hasFiles()) {
+                success = true;
+                List<File> files = db.getFiles();
+                for (File file : files) {
+                    System.out.println("[Drag & Drop] Transferência solicitada: " + file.getAbsolutePath());
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                        alert.setTitle("Transferência de Arquivos");
+                        alert.setHeaderText("Simulação de Envio de Arquivo");
+                        alert.setContentText("Arquivo detectado: " + file.getName() + " (" + (file.length() / 1024) + " KB).\n\n"
+                                + "A arquitetura de canal TCP paralelo exclusivo para stream de dados está totalmente especificada!");
+                        alert.show();
+                    });
+                }
+            }
+            event.setDropCompleted(success);
+            event.consume();
+        });
+    }
+
     private void disconnect() {
         running = false;
+        if (clipboardSync != null) {
+            clipboardSync.stop();
+        }
         try {
             if (socket != null && !socket.isClosed()) {
                 socket.close();

@@ -4,6 +4,7 @@ import java.io.*;
 import java.net.Socket;
 import java.util.concurrent.CountDownLatch;
 import java.util.List;
+import java.util.Map;
 
 import com.sun.jna.Native;
 import com.sun.jna.win32.StdCallLibrary;
@@ -54,12 +55,15 @@ public class Main extends Application {
     private Circle statusDot;
     private Label statusText;
     private Label idLabel;
+    private String meuID;
     
     private volatile Socket relaySocket;
     private TextField idInput;
     private FlowPane recentsGrid;
+    private FlowPane contactsGrid;
     private Label labelConexoesHoje;
     private Label labelDispositivos;
+    private String totalDispositivos = "...";
     private Label labelUltimoAcesso;
     private ScrollPane centerScrollPane;
     private List<StackPane> sidebarButtons = new java.util.ArrayList<>();
@@ -170,6 +174,7 @@ public class Main extends Application {
      * Atualiza o label de ID na tela principal.
      */
     public void atualizarID(String id) {
+        this.meuID = id;
         if (idLabel != null) {
             idLabel.setText(id);
         }
@@ -223,6 +228,7 @@ public class Main extends Application {
                 String resp = conexaoServidor.enviarComando("GET_DEVICE_COUNT:ALL");
                 if (resp != null && resp.startsWith("COUNT:")) {
                     String count = resp.substring(6).trim();
+                    this.totalDispositivos = count;
                     Platform.runLater(() -> {
                         if (labelDispositivos != null) {
                             labelDispositivos.setText(count);
@@ -290,7 +296,7 @@ public class Main extends Application {
 
                         DataOutputStream dataOut = new DataOutputStream(os);
                         ScreenCaster caster = new ScreenCaster(dataOut, robot);
-                        InputReceiver receiver = new InputReceiver(sock, robot);
+                        InputReceiver receiver = new InputReceiver(sock, dataOut, robot);
 
                         Thread casterThread = new Thread(caster, "relay-caster");
                         Thread receiverThread = new Thread(receiver, "relay-receiver");
@@ -455,15 +461,64 @@ public class Main extends Application {
         
         connectionArea.getChildren().addAll(myIdCard, connectCard);
 
-        // 2. Recent Sessions
+        // 2. Main Sections HBox (Recents on left, Contacts on right)
+        HBox mainSections = new HBox(40);
+        mainSections.setAlignment(Pos.TOP_LEFT);
+        
+        // 2a. Recent Sessions Section
         VBox recentsSection = new VBox(15);
         Label recentsTitle = new Label("Sessões Recentes");
         recentsTitle.getStyleClass().add("title");
         recentsTitle.setStyle("-fx-font-size: 18px;");
-
         recentsGrid = new FlowPane(20, 20);
+        HBox.setHgrow(recentsSection, Priority.ALWAYS);
         atualizarRecentes();
         recentsSection.getChildren().addAll(recentsTitle, recentsGrid);
+
+        // 2b. Contacts Section (Address Book)
+        VBox contactsSection = new VBox(15);
+        Label contactsTitle = new Label("Lista de Contatos");
+        contactsTitle.getStyleClass().add("title");
+        contactsTitle.setStyle("-fx-font-size: 18px;");
+        HBox.setHgrow(contactsSection, Priority.ALWAYS);
+
+        // Grid para cards de contatos
+        contactsGrid = new FlowPane(20, 20);
+        atualizarContatos();
+        
+        // Formulário simples para adicionar contatos
+        HBox addContactForm = new HBox(10);
+        addContactForm.setAlignment(Pos.CENTER_LEFT);
+        
+        TextField txtNickname = new TextField();
+        txtNickname.setPromptText("Apelido");
+        txtNickname.getStyleClass().add("input-modern");
+        txtNickname.setStyle("-fx-padding: 8; -fx-font-size: 13px; -fx-pref-width: 140px;");
+        
+        TextField txtId = new TextField();
+        txtId.setPromptText("ID");
+        txtId.getStyleClass().add("input-modern");
+        txtId.setStyle("-fx-padding: 8; -fx-font-size: 13px; -fx-pref-width: 140px;");
+        
+        Button btnAdd = new Button("+");
+        btnAdd.getStyleClass().add("btn-primary");
+        btnAdd.setStyle("-fx-padding: 8 15; -fx-font-size: 13px;");
+        
+        btnAdd.setOnAction(e -> {
+            String nick = txtNickname.getText().trim();
+            String idVal = txtId.getText().trim();
+            if (!nick.isEmpty() && !idVal.isEmpty()) {
+                GerenciadorContatos.salvarContato(nick, idVal);
+                txtNickname.clear();
+                txtId.clear();
+                atualizarContatos();
+            }
+        });
+        
+        addContactForm.getChildren().addAll(txtNickname, txtId, btnAdd);
+        contactsSection.getChildren().addAll(contactsTitle, addContactForm, contactsGrid);
+        
+        mainSections.getChildren().addAll(recentsSection, contactsSection);
 
         // 3. Info Panel
         VBox infoSection = new VBox(15);
@@ -472,7 +527,7 @@ public class Main extends Application {
         infoTitle.setStyle("-fx-font-size: 18px;");
 
         labelConexoesHoje = new Label(String.valueOf(GerenciadorEstatisticas.obterConexoesHoje()));
-        labelDispositivos = new Label("...");
+        labelDispositivos = new Label(totalDispositivos);
         labelUltimoAcesso = new Label(GerenciadorEstatisticas.obterUltimoAcesso());
 
         HBox statsGrid = new HBox(20);
@@ -483,7 +538,7 @@ public class Main extends Application {
         );
         infoSection.getChildren().addAll(infoTitle, statsGrid);
 
-        content.getChildren().addAll(connectionArea, recentsSection, infoSection);
+        content.getChildren().addAll(connectionArea, mainSections, infoSection);
         return content;
     }
 
@@ -495,7 +550,7 @@ public class Main extends Application {
         Label title = new Label("Seu ID");
         title.getStyleClass().add("subtitle");
 
-        idLabel = new Label("Carregando...");
+        idLabel = new Label(meuID != null ? meuID : "Carregando...");
         idLabel.getStyleClass().add("id-label");
 
         HBox actions = new HBox(10);
@@ -821,6 +876,62 @@ public class Main extends Application {
 
         content.getChildren().addAll(mainTitle, redeSection, casterSection, buttonBox);
         return content;
+    }
+
+    private void atualizarContatos() {
+        if (contactsGrid == null) return;
+        contactsGrid.getChildren().clear();
+        
+        Map<String, String> contatos = GerenciadorContatos.carregarContatos();
+        for (Map.Entry<String, String> entry : contatos.entrySet()) {
+            contactsGrid.getChildren().add(createContactCard(entry.getKey(), entry.getValue()));
+        }
+    }
+
+    private VBox createContactCard(String nickname, String id) {
+        VBox card = new VBox(8);
+        card.getStyleClass().add("session-card");
+        card.setPrefWidth(220);
+        card.setPadding(new Insets(12));
+
+        HBox header = new HBox(10);
+        header.setAlignment(Pos.CENTER_LEFT);
+        
+        // Círculo com inicial do apelido
+        Circle avatar = new Circle(12, Color.web("#2E7BFF"));
+        Label initialLbl = new Label(nickname.isEmpty() ? "?" : nickname.substring(0, 1).toUpperCase());
+        initialLbl.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px;");
+        StackPane avatarContainer = new StackPane(avatar, initialLbl);
+
+        Label nameLbl = new Label(nickname);
+        nameLbl.getStyleClass().add("text-primary");
+        nameLbl.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
+        
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        
+        Button btnDelete = new Button("×");
+        btnDelete.setStyle("-fx-background-color: transparent; -fx-text-fill: #EF4444; -fx-font-size: 14px; -fx-cursor: hand; -fx-padding: 0;");
+        btnDelete.setOnAction(e -> {
+            GerenciadorContatos.removerContato(nickname);
+            atualizarContatos();
+            e.consume(); // Evita propagar clique para o card
+        });
+        
+        header.getChildren().addAll(avatarContainer, nameLbl, spacer, btnDelete);
+
+        Label idLbl = new Label(id);
+        idLbl.getStyleClass().add("text-secondary");
+        idLbl.setStyle("-fx-font-family: 'Consolas'; -fx-font-size: 12px;");
+
+        card.getChildren().addAll(header, idLbl);
+
+        card.setOnMouseClicked(e -> {
+            if (idInput != null) {
+                idInput.setText(id);
+            }
+        });
+        return card;
     }
 
     public static void main(String[] args) {
