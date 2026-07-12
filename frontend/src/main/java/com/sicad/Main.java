@@ -61,11 +61,6 @@ public class Main extends Application {
     private volatile Socket relaySocket;
     private TextField idInput;
     private FlowPane recentsGrid;
-    private FlowPane contactsGrid;
-    private Label labelConexoesHoje;
-    private Label labelDispositivos;
-    private String totalDispositivos = "...";
-    private Label labelUltimoAcesso;
     private ScrollPane centerScrollPane;
     private List<StackPane> sidebarButtons = new java.util.ArrayList<>();
 
@@ -143,7 +138,6 @@ public class Main extends Application {
 
         // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
-        carregarEstatisticasDispositivos();
     }
 
     @Override
@@ -227,34 +221,7 @@ public class Main extends Application {
         }, "inicializar-id").start();
     }
 
-    private void carregarEstatisticasDispositivos() {
-        new Thread(() -> {
-            int tentativas = 0;
-            while (!conexaoServidor.isConectado() && tentativas < 60) {
-                try { Thread.sleep(250); } catch (InterruptedException e) { break; }
-                tentativas++;
-            }
 
-            if (!conexaoServidor.isConectado()) {
-                return;
-            }
-
-            try {
-                String resp = conexaoServidor.enviarComando("GET_DEVICE_COUNT:ALL");
-                if (resp != null && resp.startsWith("COUNT:")) {
-                    String count = resp.substring(6).trim();
-                    this.totalDispositivos = count;
-                    Platform.runLater(() -> {
-                        if (labelDispositivos != null) {
-                            labelDispositivos.setText(count);
-                        }
-                    });
-                }
-            } catch (Exception e) {
-                System.out.println("Erro ao obter estatísticas de dispositivos: " + e.getMessage());
-            }
-        }, "carregar-stats").start();
-    }
 
     private void iniciarRelayHost(String id) {
         new Thread(() -> {
@@ -356,9 +323,6 @@ public class Main extends Application {
 
         sidebar.getChildren().addAll(
                 createSidebarButton("Início", homeIcon, true, () -> exibirDashboard()),
-                createSidebarButton("Conexão", linkIcon, false, null),
-                createSidebarButton("Favoritos", starIcon, false, null),
-                createSidebarButton("Sessões Recentes", clockIcon, false, null),
                 createSpacer(),
                 createSidebarButton("Configurações", settingsIcon, false, () -> exibirConfiguracoes())
         );
@@ -457,7 +421,6 @@ public class Main extends Application {
                         SERVIDOR_REMOTO_HOST, PORTA_REMOTA
                 );
                 inicializarID();
-                carregarEstatisticasDispositivos();
             }).start();
         });
 
@@ -496,71 +459,9 @@ public class Main extends Application {
         HBox.setHgrow(recentsSection, Priority.ALWAYS);
         atualizarRecentes();
         recentsSection.getChildren().addAll(recentsTitle, recentsGrid);
+        mainSections.getChildren().addAll(recentsSection);
 
-        // 2b. Contacts Section (Address Book)
-        VBox contactsSection = new VBox(15);
-        Label contactsTitle = new Label("Lista de Contatos");
-        contactsTitle.getStyleClass().add("title");
-        contactsTitle.setStyle("-fx-font-size: 18px;");
-        HBox.setHgrow(contactsSection, Priority.ALWAYS);
-
-        // Grid para cards de contatos
-        contactsGrid = new FlowPane(20, 20);
-        atualizarContatos();
-        
-        // Formulário simples para adicionar contatos
-        HBox addContactForm = new HBox(10);
-        addContactForm.setAlignment(Pos.CENTER_LEFT);
-        
-        TextField txtNickname = new TextField();
-        txtNickname.setPromptText("Apelido");
-        txtNickname.getStyleClass().add("input-modern");
-        txtNickname.setStyle("-fx-padding: 8; -fx-font-size: 13px; -fx-pref-width: 140px;");
-        
-        TextField txtId = new TextField();
-        txtId.setPromptText("ID");
-        txtId.getStyleClass().add("input-modern");
-        txtId.setStyle("-fx-padding: 8; -fx-font-size: 13px; -fx-pref-width: 140px;");
-        
-        Button btnAdd = new Button("+");
-        btnAdd.getStyleClass().add("btn-primary");
-        btnAdd.setStyle("-fx-padding: 8 15; -fx-font-size: 13px;");
-        
-        btnAdd.setOnAction(e -> {
-            String nick = txtNickname.getText().trim();
-            String idVal = txtId.getText().trim();
-            if (!nick.isEmpty() && !idVal.isEmpty()) {
-                GerenciadorContatos.salvarContato(nick, idVal);
-                txtNickname.clear();
-                txtId.clear();
-                atualizarContatos();
-            }
-        });
-        
-        addContactForm.getChildren().addAll(txtNickname, txtId, btnAdd);
-        contactsSection.getChildren().addAll(contactsTitle, addContactForm, contactsGrid);
-        
-        mainSections.getChildren().addAll(recentsSection, contactsSection);
-
-        // 3. Info Panel
-        VBox infoSection = new VBox(15);
-        Label infoTitle = new Label("Estatísticas");
-        infoTitle.getStyleClass().add("title");
-        infoTitle.setStyle("-fx-font-size: 18px;");
-
-        labelConexoesHoje = new Label(String.valueOf(GerenciadorEstatisticas.obterConexoesHoje()));
-        labelDispositivos = new Label(totalDispositivos);
-        labelUltimoAcesso = new Label(GerenciadorEstatisticas.obterUltimoAcesso());
-
-        HBox statsGrid = new HBox(20);
-        statsGrid.getChildren().addAll(
-            createStatCard("Conexões Hoje", labelConexoesHoje),
-            createStatCard("Dispositivos", labelDispositivos),
-            createStatCard("Último Acesso", labelUltimoAcesso)
-        );
-        infoSection.getChildren().addAll(infoTitle, statsGrid);
-
-        content.getChildren().addAll(connectionArea, mainSections, infoSection);
+        content.getChildren().addAll(connectionArea, mainSections);
         return content;
     }
 
@@ -652,16 +553,9 @@ public class Main extends Application {
 
             // Salva no histórico de conexões recentes e atualiza o painel
             GerenciadorHistorico.adicionarConexao(targetId);
-            GerenciadorEstatisticas.registrarAcesso();
             
             Platform.runLater(() -> {
                 atualizarRecentes();
-                if (labelConexoesHoje != null) {
-                    labelConexoesHoje.setText(String.valueOf(GerenciadorEstatisticas.obterConexoesHoje()));
-                }
-                if (labelUltimoAcesso != null) {
-                    labelUltimoAcesso.setText(GerenciadorEstatisticas.obterUltimoAcesso());
-                }
             });
 
             connectBtn.setDisable(true);
@@ -740,21 +634,7 @@ public class Main extends Application {
         return card;
     }
 
-    private VBox createStatCard(String title, Label valLbl) {
-        VBox card = new VBox(5);
-        card.getStyleClass().add("session-card"); // reusing simple card style
-        card.setPrefWidth(200);
-        card.setAlignment(Pos.CENTER);
 
-        Label titleLbl = new Label(title);
-        titleLbl.getStyleClass().add("text-secondary");
-
-        valLbl.getStyleClass().add("text-primary");
-        valLbl.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
-
-        card.getChildren().addAll(titleLbl, valLbl);
-        return card;
-    }
 
     private void exibirDashboard() {
         if (centerScrollPane != null) {
@@ -920,62 +800,6 @@ public class Main extends Application {
 
         content.getChildren().addAll(mainTitle, redeSection, casterSection, buttonBox);
         return content;
-    }
-
-    private void atualizarContatos() {
-        if (contactsGrid == null) return;
-        contactsGrid.getChildren().clear();
-        
-        Map<String, String> contatos = GerenciadorContatos.carregarContatos();
-        for (Map.Entry<String, String> entry : contatos.entrySet()) {
-            contactsGrid.getChildren().add(createContactCard(entry.getKey(), entry.getValue()));
-        }
-    }
-
-    private VBox createContactCard(String nickname, String id) {
-        VBox card = new VBox(8);
-        card.getStyleClass().add("session-card");
-        card.setPrefWidth(220);
-        card.setPadding(new Insets(12));
-
-        HBox header = new HBox(10);
-        header.setAlignment(Pos.CENTER_LEFT);
-        
-        // Círculo com inicial do apelido
-        Circle avatar = new Circle(12, Color.web("#2E7BFF"));
-        Label initialLbl = new Label(nickname.isEmpty() ? "?" : nickname.substring(0, 1).toUpperCase());
-        initialLbl.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px;");
-        StackPane avatarContainer = new StackPane(avatar, initialLbl);
-
-        Label nameLbl = new Label(nickname);
-        nameLbl.getStyleClass().add("text-primary");
-        nameLbl.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
-        
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        
-        Button btnDelete = new Button("×");
-        btnDelete.setStyle("-fx-background-color: transparent; -fx-text-fill: #EF4444; -fx-font-size: 14px; -fx-cursor: hand; -fx-padding: 0;");
-        btnDelete.setOnAction(e -> {
-            GerenciadorContatos.removerContato(nickname);
-            atualizarContatos();
-            e.consume(); // Evita propagar clique para o card
-        });
-        
-        header.getChildren().addAll(avatarContainer, nameLbl, spacer, btnDelete);
-
-        Label idLbl = new Label(id);
-        idLbl.getStyleClass().add("text-secondary");
-        idLbl.setStyle("-fx-font-family: 'Consolas'; -fx-font-size: 12px;");
-
-        card.getChildren().addAll(header, idLbl);
-
-        card.setOnMouseClicked(e -> {
-            if (idInput != null) {
-                idInput.setText(id);
-            }
-        });
-        return card;
     }
 
     public static void main(String[] args) {
