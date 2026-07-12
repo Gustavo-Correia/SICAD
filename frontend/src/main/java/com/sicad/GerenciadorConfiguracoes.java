@@ -7,12 +7,14 @@ import java.util.Properties;
 
 public class GerenciadorConfiguracoes {
     private static final String FILE_PATH = System.getProperty("user.home") + File.separator + ".sicad_settings.properties";
+    private static final String PORTA_REMOTA_PADRAO = "29664";
 
+    /** Carrega as configuracoes e migra automaticamente a porta remota antiga do projeto. */
     public static Properties carregarConfiguracoes() {
         Properties props = new Properties();
         // Valores Padrão
         props.setProperty("server.host", "bore.pub");
-        props.setProperty("server.port", "19664");
+        props.setProperty("server.port", PORTA_REMOTA_PADRAO);
         props.setProperty("local.port", "5001");
         props.setProperty("caster.fps", "15");
         props.setProperty("caster.quality", "0.55");
@@ -21,6 +23,9 @@ public class GerenciadorConfiguracoes {
         if (file.exists()) {
             try (FileInputStream in = new FileInputStream(file)) {
                 props.load(in);
+                if ("19664".equals(props.getProperty("server.port"))) {
+                    props.setProperty("server.port", PORTA_REMOTA_PADRAO);
+                }
             } catch (Exception e) {
                 System.out.println("Erro ao carregar configurações: " + e.getMessage());
             }

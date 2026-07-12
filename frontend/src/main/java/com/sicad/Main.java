@@ -43,7 +43,7 @@ public class Main extends Application {
     /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
     public static String SERVIDOR_REMOTO_HOST = "bore.pub";
     public static int PORTA_LOCAL = 5001;
-    public static int PORTA_REMOTA = 19664;
+    public static int PORTA_REMOTA = 29664;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
@@ -71,12 +71,13 @@ public class Main extends Application {
     private ScrollPane centerScrollPane;
     private List<StackPane> sidebarButtons = new java.util.ArrayList<>();
 
+    /** Inicializa a interface, carrega as configuracoes e conecta o aplicativo ao servidor. */
     @Override
     public void start(Stage stage) {
         try {
             java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
             SERVIDOR_REMOTO_HOST = props.getProperty("server.host", "bore.pub");
-            PORTA_REMOTA = Integer.parseInt(props.getProperty("server.port", "19664"));
+            PORTA_REMOTA = Integer.parseInt(props.getProperty("server.port", "29664"));
             PORTA_LOCAL = Integer.parseInt(props.getProperty("local.port", "5001"));
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());

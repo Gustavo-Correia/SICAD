@@ -70,7 +70,7 @@ services:
   bore:
     image: ekzhang/bore:latest
     container_name: sicad_bore
-    command: "local --local-host backend-1 --to bore.pub -p 19664 5000"
+    command: "local --local-host backend-1 --to bore.pub -p 29664 5000"
     restart: always
     depends_on:
       - backend-1
