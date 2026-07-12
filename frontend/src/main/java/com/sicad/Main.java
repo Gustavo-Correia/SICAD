@@ -875,8 +875,8 @@ public class Main extends Application {
         Label qualityLabel = new Label("Qualidade de Compactação JPEG:");
         qualityLabel.getStyleClass().add("text-secondary");
         
-        double currentQuality = Double.parseDouble(props.getProperty("caster.quality", "0.55")) * 100;
-        Slider qualitySlider = new Slider(10, 85, Math.min(85, currentQuality));
+        double currentQuality = Double.parseDouble(props.getProperty("caster.quality", "0.85")) * 100;
+        Slider qualitySlider = new Slider(50, 95, Math.min(95, Math.max(50, currentQuality)));
         qualitySlider.setShowTickLabels(true);
         qualitySlider.setShowTickMarks(true);
         qualitySlider.setMajorTickUnit(20);
@@ -900,8 +900,8 @@ public class Main extends Application {
         Label limiteBandaLabel = new Label("Limite do vídeo (Kbps):");
         limiteBandaLabel.getStyleClass().add("text-secondary");
 
-        Slider limiteBandaSlider = new Slider(256, 5000,
-                Double.parseDouble(props.getProperty("caster.maxKbps", "1200")));
+        Slider limiteBandaSlider = new Slider(1000, 10000,
+                Double.parseDouble(props.getProperty("caster.maxKbps", "5000")));
         limiteBandaSlider.setShowTickLabels(true);
         limiteBandaSlider.setShowTickMarks(true);
         limiteBandaSlider.setMajorTickUnit(1000);
@@ -921,8 +921,8 @@ public class Main extends Application {
         Label resolucaoLabel = new Label("Resolução transmitida:");
         resolucaoLabel.getStyleClass().add("text-secondary");
 
-        double resolucaoAtual = Double.parseDouble(props.getProperty("caster.scale", "0.65")) * 100;
-        Slider resolucaoSlider = new Slider(35, 85, Math.max(35, Math.min(85, resolucaoAtual)));
+        double resolucaoAtual = Double.parseDouble(props.getProperty("caster.scale", "0.85")) * 100;
+        Slider resolucaoSlider = new Slider(50, 100, Math.max(50, Math.min(100, resolucaoAtual)));
         resolucaoSlider.setShowTickLabels(true);
         resolucaoSlider.setShowTickMarks(true);
         resolucaoSlider.setMajorTickUnit(10);

@@ -17,9 +17,9 @@ public class GerenciadorConfiguracoes {
         props.setProperty("server.port", PORTA_REMOTA_PADRAO);
         props.setProperty("local.port", "5001");
         props.setProperty("caster.fps", "15");
-        props.setProperty("caster.quality", "0.55");
-        props.setProperty("caster.maxKbps", "1200");
-        props.setProperty("caster.scale", "0.65");
+        props.setProperty("caster.quality", "0.85");
+        props.setProperty("caster.maxKbps", "5000");
+        props.setProperty("caster.scale", "0.85");
 
         File file = new File(FILE_PATH);
         if (file.exists()) {

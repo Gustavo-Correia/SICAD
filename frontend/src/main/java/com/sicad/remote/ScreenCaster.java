@@ -17,21 +17,15 @@ import javax.imageio.stream.ImageOutputStream;
 public class ScreenCaster implements Runnable {
     private final DataOutputStream saida;
     private final Robot robo;
-    private final Object monitorQuadro = new Object();
     private volatile boolean emExecucao = true;
-    private BufferedImage quadroPendente;
     private BufferedImage ultimoQuadroEnviado;
-    private float qualidadeCompressao = 0.55f;
+    private float qualidadeCompressao = 0.85f;
     private int quadrosPorSegundo = 15;
     private int intervaloCapturaMs = 1000 / quadrosPorSegundo;
-    private int limiteBytesPorSegundo = 1200 * 1024 / 8;
-    private int limiteAdaptadoBytesPorSegundo = limiteBytesPorSegundo;
-    private long proximoEnvioPermitidoNanos;
+    private double escalaTransmissao = 0.85;
     private int larguraTelaInformada;
     private int alturaTelaInformada;
-    private double escalaTransmissao = 0.65;
 
-    /** Cria o transmissor e carrega os limites de captura e compressao configurados. */
     public ScreenCaster(DataOutputStream saida, Robot robo) {
         this.saida = saida;
         this.robo = robo;
@@ -41,108 +35,52 @@ public class ScreenCaster implements Runnable {
             this.quadrosPorSegundo = Math.max(1, Math.min(60,
                     Integer.parseInt(configuracoes.getProperty("caster.fps", "15"))));
             this.intervaloCapturaMs = 1000 / this.quadrosPorSegundo;
-            float qualidadeConfigurada = Float.parseFloat(configuracoes.getProperty("caster.quality", "0.55"));
-            this.qualidadeCompressao = Math.max(0.1f, Math.min(0.85f, qualidadeConfigurada));
-            double escalaConfigurada = Double.parseDouble(configuracoes.getProperty("caster.scale", "0.65"));
-            this.escalaTransmissao = Math.max(0.35, Math.min(0.85, escalaConfigurada));
-            int limiteKbps = Integer.parseInt(configuracoes.getProperty("caster.maxKbps", "1200"));
-            this.limiteBytesPorSegundo = Math.max(256, Math.min(10_000, limiteKbps)) * 1024 / 8;
-            this.limiteAdaptadoBytesPorSegundo = this.limiteBytesPorSegundo;
+            float qualidadeConfigurada = Float.parseFloat(configuracoes.getProperty("caster.quality", "0.85"));
+            this.qualidadeCompressao = Math.max(0.1f, Math.min(0.95f, qualidadeConfigurada));
+            double escalaConfigurada = Double.parseDouble(configuracoes.getProperty("caster.scale", "0.85"));
+            this.escalaTransmissao = Math.max(0.35, Math.min(1.0, escalaConfigurada));
             System.out.println("Video configurado: " + quadrosPorSegundo + " FPS, qualidade "
                     + Math.round(qualidadeCompressao * 100) + "%, resolucao "
-                    + Math.round(escalaTransmissao * 100) + "%, limite " + limiteKbps + " Kbps");
+                    + Math.round(escalaTransmissao * 100) + "%");
         } catch (Exception e) {
             System.out.println("Erro ao carregar configuracoes no transmissor de tela: " + e.getMessage());
         }
     }
 
-    /** Interrompe a captura e acorda a transmissao caso ela esteja aguardando um quadro. */
     public void pararTransmissao() {
         this.emExecucao = false;
-        synchronized (monitorQuadro) {
-            monitorQuadro.notifyAll();
-        }
     }
 
-    /** Captura a tela na taxa configurada e conserva somente o quadro mais recente. */
     @Override
     public void run() {
         Rectangle areaTela = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
-        Thread tarefaTransmissao = new Thread(this::transmitirQuadros, "transmissao-quadros");
-        tarefaTransmissao.start();
-
-        try {
-            while (emExecucao) {
-                long inicioCaptura = System.nanoTime();
-                BufferedImage captura = robo.createScreenCapture(areaTela);
-
-                synchronized (monitorQuadro) {
-                    quadroPendente = captura;
-                    monitorQuadro.notify();
-                }
-
-                long duracaoMs = (System.nanoTime() - inicioCaptura) / 1_000_000L;
-                long esperaMs = intervaloCapturaMs - duracaoMs;
-                if (esperaMs > 0) {
-                    Thread.sleep(esperaMs);
-                }
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            if (emExecucao) {
-                System.out.println("Captura de tela encerrada: " + e.getMessage());
-            }
-        } finally {
-            pararTransmissao();
-            try {
-                tarefaTransmissao.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
-    /** Codifica e envia o quadro mais novo disponivel, descartando capturas substituidas. */
-    private void transmitirQuadros() {
         ImageWriter escritor = ImageIO.getImageWritersByFormatName("jpg").next();
         ImageWriteParam parametros = escritor.getDefaultWriteParam();
         parametros.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
 
         try {
             while (emExecucao) {
-                BufferedImage captura = aguardarQuadroMaisRecente();
-                if (captura == null) {
-                    continue;
-                }
+                long inicioCiclo = System.nanoTime();
 
+                BufferedImage captura = robo.createScreenCapture(areaTela);
                 BufferedImage quadroRedimensionado = redimensionarImagem(captura, escalaTransmissao);
+
                 if (quadrosSaoSimilares(quadroRedimensionado, ultimoQuadroEnviado)) {
+                    aguardarIntervalo(inicioCiclo);
                     continue;
                 }
 
-                long instanteAtual = System.nanoTime();
-                if (instanteAtual < proximoEnvioPermitidoNanos) {
-                    continue;
-                }
-
-                byte[] dadosImagem = codificarQuadroLimitado(escritor, parametros, quadroRedimensionado);
-                long inicioEscrita = System.nanoTime();
+                enviarDimensoesSeAlteradas(captura.getWidth(), captura.getHeight());
+                byte[] dadosImagem = codificarJpeg(escritor, parametros, quadroRedimensionado, qualidadeCompressao);
                 synchronized (saida) {
-                    enviarDimensoesSeAlteradas(captura.getWidth(), captura.getHeight());
                     saida.writeInt(dadosImagem.length);
                     saida.write(dadosImagem);
                     saida.flush();
                 }
-                long duracaoEscrita = Math.max(1, System.nanoTime() - inicioEscrita);
-                atualizarLimitePelaEscrita(dadosImagem.length, duracaoEscrita);
                 ultimoQuadroEnviado = quadroRedimensionado;
-                long intervaloEnvio = (long) dadosImagem.length * 1_000_000_000L
-                        / limiteAdaptadoBytesPorSegundo;
-                proximoEnvioPermitidoNanos = System.nanoTime() + intervaloEnvio;
+
+                aguardarIntervalo(inicioCiclo);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         } catch (Exception e) {
             if (emExecucao) {
                 System.out.println("Transmissao de tela encerrada: " + e.getMessage());
@@ -153,20 +91,14 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Reduz o bitrate quando a escrita TCP indica que a rota nao sustenta o limite configurado. */
-    private void atualizarLimitePelaEscrita(int quantidadeBytes, long duracaoNanos) {
-        long vazaoObservada = (long) quantidadeBytes * 1_000_000_000L / duracaoNanos;
-        if (duracaoNanos > 20_000_000L) {
-            int limiteSeguro = (int) Math.max(128 * 1024 / 8, vazaoObservada * 3 / 4);
-            limiteAdaptadoBytesPorSegundo = Math.min(limiteBytesPorSegundo, limiteSeguro);
-            return;
+    private void aguardarIntervalo(long inicioCicloNanos) throws InterruptedException {
+        long duracaoMs = (System.nanoTime() - inicioCicloNanos) / 1_000_000L;
+        long esperaMs = intervaloCapturaMs - duracaoMs;
+        if (esperaMs > 0) {
+            Thread.sleep(esperaMs);
         }
-        int recuperacao = Math.max(1024, limiteBytesPorSegundo / 20);
-        limiteAdaptadoBytesPorSegundo = Math.min(limiteBytesPorSegundo,
-                limiteAdaptadoBytesPorSegundo + recuperacao);
     }
 
-    /** Informa ao cliente a resolucao real usada para converter coordenadas do mouse. */
     private void enviarDimensoesSeAlteradas(int largura, int altura) throws Exception {
         if (largura == larguraTelaInformada && altura == alturaTelaInformada) {
             return;
@@ -178,35 +110,11 @@ public class ScreenCaster implements Runnable {
         alturaTelaInformada = altura;
     }
 
-    /** Reduz progressivamente qualidade e resolucao ate o JPEG caber no limite de baixa latencia. */
-    private byte[] codificarQuadroLimitado(ImageWriter escritor, ImageWriteParam parametros,
-            BufferedImage quadroOriginal) throws Exception {
-        int tamanhoMaximoQuadro = calcularTamanhoMaximoQuadro();
-        BufferedImage quadroCodificado = quadroOriginal;
-        float qualidade = qualidadeCompressao;
-        byte[] dadosImagem = codificarJpeg(escritor, parametros, quadroCodificado, qualidade,
-                tamanhoMaximoQuadro);
-
-        while (dadosImagem.length > tamanhoMaximoQuadro
-                && (quadroCodificado.getWidth() > 160 || quadroCodificado.getHeight() > 90)) {
-            qualidade = Math.max(0.1f, qualidade * 0.85f);
-            quadroCodificado = redimensionarImagem(quadroCodificado, 0.85);
-            dadosImagem = codificarJpeg(escritor, parametros, quadroCodificado, qualidade,
-                    tamanhoMaximoQuadro);
-        }
-        return dadosImagem;
-    }
-
-    /** Calcula o tamanho de quadro que ocupa no maximo cerca de 200 ms do bitrate atual. */
-    private int calcularTamanhoMaximoQuadro() {
-        return Math.max(32 * 1024, Math.min(128 * 1024, limiteAdaptadoBytesPorSegundo / 5));
-    }
-
-    /** Codifica uma imagem em JPEG usando a qualidade solicitada. */
+    /** Codifica uma imagem em JPEG usando a qualidade solicitada pelo usuario, sem reducao progressiva. */
     private byte[] codificarJpeg(ImageWriter escritor, ImageWriteParam parametros,
-            BufferedImage quadro, float qualidade, int tamanhoEsperado) throws Exception {
+            BufferedImage quadro, float qualidade) throws Exception {
         parametros.setCompressionQuality(qualidade);
-        ByteArrayOutputStream fluxoDados = new ByteArrayOutputStream(tamanhoEsperado);
+        ByteArrayOutputStream fluxoDados = new ByteArrayOutputStream(256 * 1024);
         try (ImageOutputStream fluxoImagem = ImageIO.createImageOutputStream(fluxoDados)) {
             escritor.setOutput(fluxoImagem);
             escritor.write(null, new IIOImage(quadro, null, null), parametros);
@@ -214,19 +122,6 @@ public class ScreenCaster implements Runnable {
         return fluxoDados.toByteArray();
     }
 
-    /** Aguarda uma captura e retira atomicamente apenas a versao mais recente. */
-    private BufferedImage aguardarQuadroMaisRecente() throws InterruptedException {
-        synchronized (monitorQuadro) {
-            while (emExecucao && quadroPendente == null) {
-                monitorQuadro.wait();
-            }
-            BufferedImage quadro = quadroPendente;
-            quadroPendente = null;
-            return quadro;
-        }
-    }
-
-    /** Envia a resposta do medidor de latencia pelo canal binario de controle. */
     public static void enviarPong(DataOutputStream saida, long instanteOriginal) {
         if (saida == null) {
             return;
@@ -242,7 +137,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Envia o texto da area de transferencia pelo canal binario de controle. */
     public static void enviarClipboard(DataOutputStream saida, String texto) {
         if (saida == null) {
             return;
@@ -260,7 +154,7 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Compara amostras de dois quadros para evitar transmitir uma tela sem alteracoes. */
+    /** Compara amostras de dois quadros com passo 4 para detectar mudancas rapidamente. */
     private boolean quadrosSaoSimilares(BufferedImage primeiro, BufferedImage segundo) {
         if (primeiro == null || segundo == null) {
             return false;
@@ -271,7 +165,7 @@ public class ScreenCaster implements Runnable {
 
         int largura = primeiro.getWidth();
         int altura = primeiro.getHeight();
-        int passo = 2;
+        int passo = 4;
 
         for (int y = 0; y < altura; y += passo) {
             for (int x = 0; x < largura; x += passo) {
@@ -283,7 +177,6 @@ public class ScreenCaster implements Runnable {
         return true;
     }
 
-    /** Reduz a resolucao do quadro antes da codificacao JPEG para limitar o trafego. */
     private BufferedImage redimensionarImagem(BufferedImage original, double escala) {
         int largura = (int) (original.getWidth() * escala);
         int altura = (int) (original.getHeight() * escala);
