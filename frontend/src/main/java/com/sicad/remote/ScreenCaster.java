@@ -31,8 +31,7 @@ public class ScreenCaster implements Runnable {
             java.util.Properties props = com.sicad.GerenciadorConfiguracoes.carregarConfiguracoes();
             this.maxFps = Integer.parseInt(props.getProperty("caster.fps", "15"));
             this.targetDelayMs = 1000 / this.maxFps;
-            // Forçamos uma qualidade maior (0.75) porque a imagem será reduzida
-            this.compressionQuality = 0.75f;
+            this.compressionQuality = 0.55f;
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações no ScreenCaster: " + e.getMessage());
         }
@@ -126,16 +125,39 @@ public class ScreenCaster implements Runnable {
     }
 
     /**
-     * Compara de forma ultra-rápida (amostragem) se o novo frame é similar ao anterior
+     * Compara de forma ultra-rápida (amostragem na memória) se o novo frame é similar ao anterior
      */
     private boolean isFrameSimilar(BufferedImage img1, BufferedImage img2) {
         if (img1 == null || img2 == null) return false;
         if (img1.getWidth() != img2.getWidth() || img1.getHeight() != img2.getHeight()) return false;
 
+        java.awt.image.DataBuffer db1 = img1.getRaster().getDataBuffer();
+        java.awt.image.DataBuffer db2 = img2.getRaster().getDataBuffer();
+
+        if (db1 instanceof java.awt.image.DataBufferInt && db2 instanceof java.awt.image.DataBufferInt) {
+            int[] data1 = ((java.awt.image.DataBufferInt) db1).getData();
+            int[] data2 = ((java.awt.image.DataBufferInt) db2).getData();
+            
+            int step = 10;
+            int diffs = 0;
+            int totalSampled = 0;
+            
+            // Acesso direto no array 1D
+            for (int i = 0; i < data1.length; i += step) {
+                totalSampled++;
+                if (data1[i] != data2[i]) {
+                    diffs++;
+                    if (diffs > (totalSampled * 0.0015)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        // Fallback
         int w = img1.getWidth();
         int h = img1.getHeight();
-
-        // Escaneia pulando de 10 em 10 pixels (horizontal/vertical)
         int step = 10;
         int diffs = 0;
         int totalSampled = 0;
@@ -145,7 +167,6 @@ public class ScreenCaster implements Runnable {
                 totalSampled++;
                 if (img1.getRGB(x, y) != img2.getRGB(x, y)) {
                     diffs++;
-                    // Se mais que 0.15% dos pixels amostrados mudaram, envia o frame
                     if (diffs > (totalSampled * 0.0015)) {
                         return false;
                     }
@@ -160,7 +181,7 @@ public class ScreenCaster implements Runnable {
         int h = (int) (original.getHeight() * scale);
         BufferedImage resized = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
         java.awt.Graphics2D g = resized.createGraphics();
-        g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
         g.drawImage(original, 0, 0, w, h, null);
         g.dispose();
         return resized;
