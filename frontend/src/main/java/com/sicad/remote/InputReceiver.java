@@ -98,6 +98,14 @@ public class InputReceiver implements Runnable {
                         int keyCode = Integer.parseInt(parts[1]);
                         robot.keyRelease(keyCode);
                     }
+                case "PREPARAR_RECEBIMENTO_ARQUIVO":
+                    if(parts.length >= 2) {
+                        String[] fileInfo = parts[1].split(":");
+                        String nomeArquivo = fileInfo[0];
+                        long tamanhoArquivo = Long.parseLong(fileInfo[1]);
+
+                        System.out.println("O cliente iniciou o envio do arquivo: " + nomeArquivo + " (" + tamanhoArquivo + " bytes)");
+                    }
                     break;
             }
         } catch (Exception e) {

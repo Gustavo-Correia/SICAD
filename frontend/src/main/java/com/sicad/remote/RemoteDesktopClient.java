@@ -422,14 +422,10 @@ public class RemoteDesktopClient {
                 List<File> files = db.getFiles();
                 for (File file : files) {
                     System.out.println("[Drag & Drop] Transferência solicitada: " + file.getAbsolutePath());
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                        alert.setTitle("Transferência de Arquivos");
-                        alert.setHeaderText("Simulação de Envio de Arquivo");
-                        alert.setContentText("Arquivo detectado: " + file.getName() + " (" + (file.length() / 1024) + " KB).\n\n"
-                                + "A arquitetura de canal TCP paralelo exclusivo para stream de dados está totalmente especificada!");
-                        alert.show();
-                    });
+                 
+                    sendCommand("PREPARAR_RECEBIMENTO_ARQUIVO:" + file.getName() + ":" + file.length());
+                    
+                    TransferidorArquivo.enviar("bore.pub", 19664, targetId, file, null);
                 }
             }
             event.setDropCompleted(success);
