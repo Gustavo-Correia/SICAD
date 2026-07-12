@@ -46,6 +46,8 @@ public class RemoteDesktopClient {
     private final AtomicReference<Image> imagemPendente = new AtomicReference<>();
     private final AtomicBoolean atualizacaoImagemAgendada = new AtomicBoolean();
     private final AtomicBoolean encerramentoNotificado = new AtomicBoolean();
+    private volatile int larguraTelaRemota;
+    private volatile int alturaTelaRemota;
 
     public RemoteDesktopClient(String targetId, String localId) {
         this.targetId = targetId;
@@ -231,39 +233,30 @@ public class RemoteDesktopClient {
         }
     }
 
-    private javafx.geometry.Point2D mapCoordinates(double mouseX, double mouseY) {
+    /** Converte a posicao exibida para coordenadas da resolucao real do computador remoto. */
+    private javafx.geometry.Point2D mapearCoordenadas(double posicaoCenaX, double posicaoCenaY) {
         if (imageView == null || imageView.getImage() == null) {
             return null;
         }
-        
-        double imageWidth = imageView.getImage().getWidth();
-        double imageHeight = imageView.getImage().getHeight();
-        
-        double viewWidth = imageView.getBoundsInLocal().getWidth();
-        double viewHeight = imageView.getBoundsInLocal().getHeight();
-        
-        double scaleX = viewWidth / imageWidth;
-        double scaleY = viewHeight / imageHeight;
-        
-        // Calcula a escala real mantendo o aspect ratio
-        double finalScale = Math.min(scaleX, scaleY);
-        
-        double actualImageWidth = imageWidth * finalScale;
-        double actualImageHeight = imageHeight * finalScale;
-        
-        // Offset (barras pretas / letterbox ou pillarbox)
-        double offsetX = (viewWidth - actualImageWidth) / 2.0;
-        double offsetY = (viewHeight - actualImageHeight) / 2.0;
-        
-        // Mapeia para o pixel da imagem remota
-        double mappedX = (mouseX - offsetX) / finalScale;
-        double mappedY = (mouseY - offsetY) / finalScale;
-        
-        // Limita dentro das bordas da imagem remota
-        mappedX = Math.max(0, Math.min(imageWidth - 1, mappedX));
-        mappedY = Math.max(0, Math.min(imageHeight - 1, mappedY));
-        
-        return new javafx.geometry.Point2D(mappedX, mappedY);
+
+        javafx.geometry.Point2D pontoLocal = imageView.sceneToLocal(posicaoCenaX, posicaoCenaY);
+        javafx.geometry.Bounds limitesImagem = imageView.getBoundsInLocal();
+        if (!limitesImagem.contains(pontoLocal)) {
+            return null;
+        }
+
+        double larguraReferencia = larguraTelaRemota > 0
+                ? larguraTelaRemota : imageView.getImage().getWidth();
+        double alturaReferencia = alturaTelaRemota > 0
+                ? alturaTelaRemota : imageView.getImage().getHeight();
+        double proporcaoX = (pontoLocal.getX() - limitesImagem.getMinX()) / limitesImagem.getWidth();
+        double proporcaoY = (pontoLocal.getY() - limitesImagem.getMinY()) / limitesImagem.getHeight();
+        double posicaoRemotaX = Math.max(0, Math.min(larguraReferencia - 1,
+                proporcaoX * larguraReferencia));
+        double posicaoRemotaY = Math.max(0, Math.min(alturaReferencia - 1,
+                proporcaoY * alturaReferencia));
+
+        return new javafx.geometry.Point2D(posicaoRemotaX, posicaoRemotaY);
     }
 
     /** Cria a janela de visualizacao e registra os controles da sessao remota. */
@@ -340,14 +333,14 @@ public class RemoteDesktopClient {
 
         // Eventos de Mouse com mapeamento de coordenadas corrigido (vinculados ao imageContainer)
         imageContainer.setOnMouseMoved(e -> {
-            javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
+            javafx.geometry.Point2D mapped = mapearCoordenadas(e.getSceneX(), e.getSceneY());
             if (mapped != null) {
                 sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
         });
  
         imageContainer.setOnMouseDragged(e -> {
-            javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
+            javafx.geometry.Point2D mapped = mapearCoordenadas(e.getSceneX(), e.getSceneY());
             if (mapped != null) {
                 sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
@@ -403,6 +396,10 @@ public class RemoteDesktopClient {
             try {
                 while (running) {
                     int tamanho = entradaDados.readInt();
+                    if (tamanho == -3) {
+                        processarMensagemControle(tamanho, entradaDados);
+                        continue;
+                    }
                     if (tamanho <= 0 || tamanho > 32 * 1024 * 1024) {
                         throw new IOException("Tamanho de quadro invalido: " + tamanho);
                     }
@@ -464,7 +461,7 @@ public class RemoteDesktopClient {
         }
     }
 
-    /** Processa as mensagens binarias pequenas que chegam exclusivamente pelo controle. */
+    /** Processa ping, area de transferencia e dimensoes auxiliares da sessao. */
     private void processarMensagemControle(int tipoMensagem, DataInputStream entradaDados) throws Exception {
         if (tipoMensagem == -1) {
             long instanteOriginal = entradaDados.readLong();
@@ -481,6 +478,14 @@ public class RemoteDesktopClient {
             String texto = new String(dadosTexto, java.nio.charset.StandardCharsets.UTF_8);
             if (clipboardSync != null) {
                 clipboardSync.aplicarTextoRemoto(texto);
+            }
+            return;
+        }
+        if (tipoMensagem == -3) {
+            larguraTelaRemota = entradaDados.readInt();
+            alturaTelaRemota = entradaDados.readInt();
+            if (larguraTelaRemota <= 0 || alturaTelaRemota <= 0) {
+                throw new IOException("Dimensoes remotas invalidas");
             }
             return;
         }
@@ -547,8 +552,8 @@ public class RemoteDesktopClient {
     /** Configura o socket antes da conexao para limitar filas TCP sem desabilitar o fluxo confiavel. */
     private void configurarSocketBaixaLatencia(Socket socketConfigurado) throws Exception {
         socketConfigurado.setTcpNoDelay(true);
-        socketConfigurado.setSendBufferSize(64 * 1024);
-        socketConfigurado.setReceiveBufferSize(64 * 1024);
+        socketConfigurado.setSendBufferSize(16 * 1024);
+        socketConfigurado.setReceiveBufferSize(16 * 1024);
     }
 
     private void sendCommand(String command) {

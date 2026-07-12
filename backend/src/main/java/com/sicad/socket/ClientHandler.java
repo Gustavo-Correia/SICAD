@@ -282,8 +282,8 @@ public class ClientHandler implements Runnable {
     /** Reduz filas TCP e desativa o atraso de pequenos comandos de controle. */
     private void configurarSocketBaixaLatencia(Socket socketConfigurado) throws SocketException {
         socketConfigurado.setTcpNoDelay(true);
-        socketConfigurado.setSendBufferSize(64 * 1024);
-        socketConfigurado.setReceiveBufferSize(64 * 1024);
+        socketConfigurado.setSendBufferSize(16 * 1024);
+        socketConfigurado.setReceiveBufferSize(16 * 1024);
     }
 
     /** Fecha um socket da ponte sem ocultar a causa original do encerramento. */

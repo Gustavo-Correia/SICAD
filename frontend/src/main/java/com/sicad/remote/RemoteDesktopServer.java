@@ -87,10 +87,9 @@ public class RemoteDesktopServer {
         try {
             System.out.println("Sessão remota iniciada com: " + clientSocket.getInetAddress());
             
-            // LIMITA O BUFFER TCP PARA PREVENIR BUFFER BLOAT (LAG/PING ALTO)
-            // Isso força o ScreenCaster a pular quadros automaticamente quando a rede está lenta
-            clientSocket.setSendBufferSize(64 * 1024);
-            clientSocket.setReceiveBufferSize(64 * 1024);
+            // Limita os bytes que podem aguardar no TCP; o transmissor descarta quadros antes da escrita.
+            clientSocket.setSendBufferSize(16 * 1024);
+            clientSocket.setReceiveBufferSize(16 * 1024);
             clientSocket.setTcpNoDelay(true);
 
             // Usamos DataOutputStream para o vídeo pois precisamos enviar o tamanho e depois os bytes brutos

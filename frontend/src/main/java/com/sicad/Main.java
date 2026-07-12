@@ -332,8 +332,8 @@ public class Main extends Application {
         try {
             socketCanal.setTcpNoDelay(true);
             socketCanal.setKeepAlive(true);
-            socketCanal.setSendBufferSize(64 * 1024);
-            socketCanal.setReceiveBufferSize(64 * 1024);
+            socketCanal.setSendBufferSize(16 * 1024);
+            socketCanal.setReceiveBufferSize(16 * 1024);
             socketCanal.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
             PrintWriter saidaRegistro = new PrintWriter(socketCanal.getOutputStream(), true);
             saidaRegistro.println("REGISTRAR_CANAL_RELAY:" + id + ":" + canal);
@@ -789,6 +789,7 @@ public class Main extends Application {
         }
     }
 
+    /** Cria a tela de configuracoes de rede e dos limites de transmissao remota. */
     private VBox createConfiguracoesContent() {
         VBox content = new VBox(25);
         content.setPadding(new Insets(30));
@@ -875,7 +876,7 @@ public class Main extends Application {
         qualityLabel.getStyleClass().add("text-secondary");
         
         double currentQuality = Double.parseDouble(props.getProperty("caster.quality", "0.55")) * 100;
-        Slider qualitySlider = new Slider(10, 100, currentQuality);
+        Slider qualitySlider = new Slider(10, 60, Math.min(60, currentQuality));
         qualitySlider.setShowTickLabels(true);
         qualitySlider.setShowTickMarks(true);
         qualitySlider.setMajorTickUnit(20);
@@ -895,6 +896,27 @@ public class Main extends Application {
         casterGrid.add(qualityLabel, 0, 1);
         casterGrid.add(qualitySlider, 1, 1);
         casterGrid.add(qualityValLabel, 2, 1);
+
+        Label limiteBandaLabel = new Label("Limite do vídeo (Kbps):");
+        limiteBandaLabel.getStyleClass().add("text-secondary");
+
+        Slider limiteBandaSlider = new Slider(256, 5000,
+                Double.parseDouble(props.getProperty("caster.maxKbps", "1200")));
+        limiteBandaSlider.setShowTickLabels(true);
+        limiteBandaSlider.setShowTickMarks(true);
+        limiteBandaSlider.setMajorTickUnit(1000);
+        limiteBandaSlider.setBlockIncrement(128);
+        limiteBandaSlider.setPrefWidth(300);
+
+        Label limiteBandaValor = new Label(((int) limiteBandaSlider.getValue()) + " Kbps");
+        limiteBandaValor.getStyleClass().add("text-primary");
+        limiteBandaValor.setStyle("-fx-font-weight: bold;");
+        limiteBandaSlider.valueProperty().addListener((observavel, valorAntigo, valorNovo) ->
+                limiteBandaValor.setText(valorNovo.intValue() + " Kbps"));
+
+        casterGrid.add(limiteBandaLabel, 0, 2);
+        casterGrid.add(limiteBandaSlider, 1, 2);
+        casterGrid.add(limiteBandaValor, 2, 2);
 
         casterSection.getChildren().addAll(casterTitle, casterGrid);
 
@@ -916,6 +938,7 @@ public class Main extends Application {
                 String localPortStr = localPortInput.getText().trim();
                 int fps = (int) fpsSlider.getValue();
                 float quality = (float) (qualitySlider.getValue() / 100.0);
+                int limiteKbps = (int) limiteBandaSlider.getValue();
 
                 if (host.isEmpty() || portStr.isEmpty() || localPortStr.isEmpty()) {
                     saveMsg.setText("Erro: Preencha todos os campos.");
@@ -923,7 +946,8 @@ public class Main extends Application {
                     return;
                 }
 
-                GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr, localPortStr, String.valueOf(fps), String.valueOf(quality));
+                GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr, localPortStr,
+                        String.valueOf(fps), String.valueOf(quality), String.valueOf(limiteKbps));
 
                 SERVIDOR_REMOTO_HOST = host;
                 PORTA_REMOTA = Integer.parseInt(portStr);
