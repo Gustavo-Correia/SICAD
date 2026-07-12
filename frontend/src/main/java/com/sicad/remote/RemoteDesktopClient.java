@@ -23,6 +23,7 @@ import javafx.geometry.Pos;
 import javafx.scene.input.*;
 import java.io.File;
 import java.util.List;
+import com.sicad.TransferidorArquivo;
 
 public class RemoteDesktopClient {
     private final String targetHost;
@@ -420,6 +421,9 @@ public class RemoteDesktopClient {
             if (db.hasFiles()) {
                 success = true;
                 List<File> files = db.getFiles();
+
+                TransferidorArquivo transferidor = new TransferidorArquivo();
+
                 for (File file : files) {
                     System.out.println("[Drag & Drop] Transferência solicitada: " + file.getAbsolutePath());
                  
