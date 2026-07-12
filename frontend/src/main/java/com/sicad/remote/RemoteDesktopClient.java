@@ -30,11 +30,13 @@ public class RemoteDesktopClient {
     private final String localId;
     private final String targetId;
     private Socket socket;
+    private Socket socketInput;
     private PrintWriter out;
     private volatile boolean running = true;
     private Circle pingDot;
     private Label pingLbl;
     private ClipboardSync clipboardSync;
+    private long lastMouseMoveTime = 0;
 
     public RemoteDesktopClient(String targetId, String localId) {
         this.targetId = targetId;
@@ -112,7 +114,26 @@ public class RemoteDesktopClient {
 
                 // Aceito, inicia a UI e começa a receber vídeo
                 Platform.runLater(this::createRemoteWindow);
+
+                // --------- NOVO CANAL DE INPUT -----------
+                socketInput = new Socket(serverHost, serverPort);
+                PrintWriter outInput = new PrintWriter(socketInput.getOutputStream(), true);
+                outInput.println("RELAY_CONNECT:" + targetId + "_INPUT");
                 
+                String inputResp = lerLinha(socketInput.getInputStream());
+                if (inputResp != null && !inputResp.startsWith("ERRO:")) {
+                    outInput.println("AUTH:" + localId);
+                    lerLinha(socketInput.getInputStream()); // Consume ACCEPTED
+                }
+
+                // Redireciona o envio de comandos (out) para o socket de input
+                out = outInput;
+
+                // Inicia loop de leitura de PONG e Clipboard do canal de input
+                DataInputStream dataInInput = new DataInputStream(socketInput.getInputStream());
+                startInputReadLoop(dataInInput);
+                // ------------------------------------------
+
                 DataInputStream dataIn = new DataInputStream(inStream);
                 startVideoLoop(dataIn);
 
@@ -275,16 +296,24 @@ public class RemoteDesktopClient {
 
         // Eventos de Mouse com mapeamento de coordenadas corrigido (vinculados ao imageContainer)
         imageContainer.setOnMouseMoved(e -> {
-            javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
-            if (mapped != null) {
-                sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+            long now = System.currentTimeMillis();
+            if (now - lastMouseMoveTime > 30) {
+                lastMouseMoveTime = now;
+                javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
+                if (mapped != null) {
+                    sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+                }
             }
         });
  
         imageContainer.setOnMouseDragged(e -> {
-            javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
-            if (mapped != null) {
-                sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+            long now = System.currentTimeMillis();
+            if (now - lastMouseMoveTime > 30) {
+                lastMouseMoveTime = now;
+                javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
+                if (mapped != null) {
+                    sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+                }
             }
         });
  
@@ -343,20 +372,6 @@ public class RemoteDesktopClient {
                                 adjustStageSize(img);
                             }
                         });
-                    } else if (length == -1) {
-                        // Resposta do Ping RTT
-                        long originalTimestamp = dataIn.readLong();
-                        long rtt = System.currentTimeMillis() - originalTimestamp;
-                        atualizarPing(rtt);
-                    } else if (length == -2) {
-                        // Sincronização do Clipboard vindo do Host
-                        int textLen = dataIn.readInt();
-                        byte[] textBytes = new byte[textLen];
-                        dataIn.readFully(textBytes);
-                        String text = new String(textBytes, "UTF-8");
-                        if (clipboardSync != null) {
-                            clipboardSync.aplicarTextoRemoto(text);
-                        }
                     }
                 }
             } catch (Exception e) {
@@ -369,6 +384,33 @@ public class RemoteDesktopClient {
                 disconnect();
             }
         }, "remote-client-video").start();
+    }
+
+    private void startInputReadLoop(DataInputStream dataIn) {
+        new Thread(() -> {
+            try {
+                while (running) {
+                    int length = dataIn.readInt();
+                    if (length == -1) {
+                        long originalTimestamp = dataIn.readLong();
+                        long rtt = System.currentTimeMillis() - originalTimestamp;
+                        atualizarPing(rtt);
+                    } else if (length == -2) {
+                        int textLen = dataIn.readInt();
+                        byte[] textBytes = new byte[textLen];
+                        dataIn.readFully(textBytes);
+                        String text = new String(textBytes, "UTF-8");
+                        if (clipboardSync != null) {
+                            clipboardSync.aplicarTextoRemoto(text);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                if (running) {
+                    System.out.println("Canal de input encerrado: " + e.getMessage());
+                }
+            }
+        }, "remote-client-input-read").start();
     }
 
     private void sendCommand(String command) {
@@ -445,6 +487,9 @@ public class RemoteDesktopClient {
         try {
             if (socket != null && !socket.isClosed()) {
                 socket.close();
+            }
+            if (socketInput != null && !socketInput.isClosed()) {
+                socketInput.close();
             }
         } catch (Exception e) {
             e.printStackTrace();

@@ -223,7 +223,64 @@ public class Main extends Application {
 
 
 
+    private void iniciarRelayInputHost(String inputId, Robot robot) {
+        new Thread(() -> {
+            while (!Thread.interrupted()) {
+                Socket sock = null;
+                try {
+                    sock = new Socket();
+                    sock.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
+                    PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
+                    out.println("REGISTER_RELAY:" + inputId);
+                    
+                    InputStream in = sock.getInputStream();
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    int b;
+                    while ((b = in.read()) != -1 && b != '\n') {
+                        baos.write(b);
+                    }
+                    if (baos.size() == 0) {
+                        sock.close();
+                        continue;
+                    }
+                    String line = baos.toString("UTF-8").trim();
+                    if (!line.startsWith("AUTH:")) {
+                        sock.close();
+                        continue;
+                    }
+                    
+                    OutputStream os = sock.getOutputStream();
+                    os.write("ACCEPTED\n".getBytes());
+                    os.flush();
+                    
+                    DataOutputStream dataOut = new DataOutputStream(os);
+                    InputReceiver receiver = new InputReceiver(sock, dataOut, robot);
+                    Thread receiverThread = new Thread(receiver, "relay-receiver-input");
+                    receiverThread.start();
+                    
+                    receiverThread.join();
+                } catch (Exception e) {
+                    try { Thread.sleep(3000); } catch (InterruptedException ie) { break; }
+                } finally {
+                    if (sock != null) {
+                        try { sock.close(); } catch (Exception e) {}
+                    }
+                }
+            }
+        }, "relay-input-host").start();
+    }
+
     private void iniciarRelayHost(String id) {
+        Robot robot;
+        try {
+            robot = new Robot();
+        } catch (Exception e) {
+            System.out.println("Erro ao inicializar Robot: " + e.getMessage());
+            return;
+        }
+
+        iniciarRelayInputHost(id + "_INPUT", robot);
+
         new Thread(() -> {
             while (!Thread.interrupted()) {
                 try {
@@ -236,7 +293,6 @@ public class Main extends Application {
                     System.out.println("Relay host registrado: " + id);
 
                     InputStream in = sock.getInputStream();
-                    Robot robot = new Robot();
 
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     int b;
@@ -272,15 +328,12 @@ public class Main extends Application {
 
                         DataOutputStream dataOut = new DataOutputStream(os);
                         ScreenCaster caster = new ScreenCaster(dataOut, robot);
-                        InputReceiver receiver = new InputReceiver(sock, dataOut, robot);
-
+                        
                         Thread casterThread = new Thread(caster, "relay-caster");
-                        Thread receiverThread = new Thread(receiver, "relay-receiver");
                         casterThread.start();
-                        receiverThread.start();
 
                         try {
-                            receiverThread.join();
+                            casterThread.join();
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                         }
