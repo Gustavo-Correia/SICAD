@@ -19,6 +19,7 @@ public class GerenciadorConfiguracoes {
         props.setProperty("caster.fps", "15");
         props.setProperty("caster.quality", "0.55");
         props.setProperty("caster.maxKbps", "1200");
+        props.setProperty("caster.scale", "0.65");
 
         File file = new File(FILE_PATH);
         if (file.exists()) {
@@ -36,7 +37,7 @@ public class GerenciadorConfiguracoes {
 
     /** Salva rede e limites de video usados nas proximas sessoes remotas. */
     public static void salvarConfiguracoes(String host, String porta, String portaLocal, String fps,
-            String qualidade, String limiteKbps) {
+            String qualidade, String limiteKbps, String escala) {
         Properties props = carregarConfiguracoes();
         props.setProperty("server.host", host);
         props.setProperty("server.port", porta);
@@ -44,6 +45,7 @@ public class GerenciadorConfiguracoes {
         props.setProperty("caster.fps", fps);
         props.setProperty("caster.quality", qualidade);
         props.setProperty("caster.maxKbps", limiteKbps);
+        props.setProperty("caster.scale", escala);
 
         try (FileOutputStream out = new FileOutputStream(FILE_PATH)) {
             props.store(out, "Configuracoes SICAD");

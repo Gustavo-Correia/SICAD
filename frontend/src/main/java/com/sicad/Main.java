@@ -876,7 +876,7 @@ public class Main extends Application {
         qualityLabel.getStyleClass().add("text-secondary");
         
         double currentQuality = Double.parseDouble(props.getProperty("caster.quality", "0.55")) * 100;
-        Slider qualitySlider = new Slider(10, 60, Math.min(60, currentQuality));
+        Slider qualitySlider = new Slider(10, 85, Math.min(85, currentQuality));
         qualitySlider.setShowTickLabels(true);
         qualitySlider.setShowTickMarks(true);
         qualitySlider.setMajorTickUnit(20);
@@ -918,6 +918,26 @@ public class Main extends Application {
         casterGrid.add(limiteBandaSlider, 1, 2);
         casterGrid.add(limiteBandaValor, 2, 2);
 
+        Label resolucaoLabel = new Label("Resolução transmitida:");
+        resolucaoLabel.getStyleClass().add("text-secondary");
+
+        double resolucaoAtual = Double.parseDouble(props.getProperty("caster.scale", "0.65")) * 100;
+        Slider resolucaoSlider = new Slider(35, 85, Math.max(35, Math.min(85, resolucaoAtual)));
+        resolucaoSlider.setShowTickLabels(true);
+        resolucaoSlider.setShowTickMarks(true);
+        resolucaoSlider.setMajorTickUnit(10);
+        resolucaoSlider.setPrefWidth(300);
+
+        Label resolucaoValor = new Label(((int) resolucaoSlider.getValue()) + "%");
+        resolucaoValor.getStyleClass().add("text-primary");
+        resolucaoValor.setStyle("-fx-font-weight: bold;");
+        resolucaoSlider.valueProperty().addListener((observavel, valorAntigo, valorNovo) ->
+                resolucaoValor.setText(valorNovo.intValue() + "%"));
+
+        casterGrid.add(resolucaoLabel, 0, 3);
+        casterGrid.add(resolucaoSlider, 1, 3);
+        casterGrid.add(resolucaoValor, 2, 3);
+
         casterSection.getChildren().addAll(casterTitle, casterGrid);
 
         // Botão Salvar
@@ -939,6 +959,7 @@ public class Main extends Application {
                 int fps = (int) fpsSlider.getValue();
                 float quality = (float) (qualitySlider.getValue() / 100.0);
                 int limiteKbps = (int) limiteBandaSlider.getValue();
+                float escala = (float) (resolucaoSlider.getValue() / 100.0);
 
                 if (host.isEmpty() || portStr.isEmpty() || localPortStr.isEmpty()) {
                     saveMsg.setText("Erro: Preencha todos os campos.");
@@ -947,13 +968,14 @@ public class Main extends Application {
                 }
 
                 GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr, localPortStr,
-                        String.valueOf(fps), String.valueOf(quality), String.valueOf(limiteKbps));
+                        String.valueOf(fps), String.valueOf(quality), String.valueOf(limiteKbps),
+                        String.valueOf(escala));
 
                 SERVIDOR_REMOTO_HOST = host;
                 PORTA_REMOTA = Integer.parseInt(portStr);
                 PORTA_LOCAL = Integer.parseInt(localPortStr);
 
-                saveMsg.setText("Configurações salvas com sucesso!");
+                saveMsg.setText("Configurações salvas para a próxima sessão!");
                 saveMsg.setStyle("-fx-text-fill: #10B981;");
             } catch (Exception ex) {
                 saveMsg.setText("Erro ao salvar: " + ex.getMessage());

@@ -15,9 +15,6 @@ import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageOutputStream;
 
 public class ScreenCaster implements Runnable {
-    private static final double ESCALA_TRANSMISSAO = 0.50;
-    private static final int TAMANHO_MAXIMO_QUADRO = 32 * 1024;
-
     private final DataOutputStream saida;
     private final Robot robo;
     private final Object monitorQuadro = new Object();
@@ -32,6 +29,7 @@ public class ScreenCaster implements Runnable {
     private long proximoEnvioPermitidoNanos;
     private int larguraTelaInformada;
     private int alturaTelaInformada;
+    private double escalaTransmissao = 0.65;
 
     /** Cria o transmissor e carrega os limites de captura e compressao configurados. */
     public ScreenCaster(DataOutputStream saida, Robot robo) {
@@ -44,10 +42,15 @@ public class ScreenCaster implements Runnable {
                     Integer.parseInt(configuracoes.getProperty("caster.fps", "15"))));
             this.intervaloCapturaMs = 1000 / this.quadrosPorSegundo;
             float qualidadeConfigurada = Float.parseFloat(configuracoes.getProperty("caster.quality", "0.55"));
-            this.qualidadeCompressao = Math.max(0.1f, Math.min(0.6f, qualidadeConfigurada));
+            this.qualidadeCompressao = Math.max(0.1f, Math.min(0.85f, qualidadeConfigurada));
+            double escalaConfigurada = Double.parseDouble(configuracoes.getProperty("caster.scale", "0.65"));
+            this.escalaTransmissao = Math.max(0.35, Math.min(0.85, escalaConfigurada));
             int limiteKbps = Integer.parseInt(configuracoes.getProperty("caster.maxKbps", "1200"));
             this.limiteBytesPorSegundo = Math.max(256, Math.min(10_000, limiteKbps)) * 1024 / 8;
             this.limiteAdaptadoBytesPorSegundo = this.limiteBytesPorSegundo;
+            System.out.println("Video configurado: " + quadrosPorSegundo + " FPS, qualidade "
+                    + Math.round(qualidadeCompressao * 100) + "%, resolucao "
+                    + Math.round(escalaTransmissao * 100) + "%, limite " + limiteKbps + " Kbps");
         } catch (Exception e) {
             System.out.println("Erro ao carregar configuracoes no transmissor de tela: " + e.getMessage());
         }
@@ -113,7 +116,7 @@ public class ScreenCaster implements Runnable {
                     continue;
                 }
 
-                BufferedImage quadroRedimensionado = redimensionarImagem(captura, ESCALA_TRANSMISSAO);
+                BufferedImage quadroRedimensionado = redimensionarImagem(captura, escalaTransmissao);
                 if (quadrosSaoSimilares(quadroRedimensionado, ultimoQuadroEnviado)) {
                     continue;
                 }
@@ -178,24 +181,32 @@ public class ScreenCaster implements Runnable {
     /** Reduz progressivamente qualidade e resolucao ate o JPEG caber no limite de baixa latencia. */
     private byte[] codificarQuadroLimitado(ImageWriter escritor, ImageWriteParam parametros,
             BufferedImage quadroOriginal) throws Exception {
+        int tamanhoMaximoQuadro = calcularTamanhoMaximoQuadro();
         BufferedImage quadroCodificado = quadroOriginal;
         float qualidade = qualidadeCompressao;
-        byte[] dadosImagem = codificarJpeg(escritor, parametros, quadroCodificado, qualidade);
+        byte[] dadosImagem = codificarJpeg(escritor, parametros, quadroCodificado, qualidade,
+                tamanhoMaximoQuadro);
 
-        while (dadosImagem.length > TAMANHO_MAXIMO_QUADRO
+        while (dadosImagem.length > tamanhoMaximoQuadro
                 && (quadroCodificado.getWidth() > 160 || quadroCodificado.getHeight() > 90)) {
-            qualidade = Math.max(0.15f, qualidade * 0.7f);
-            quadroCodificado = redimensionarImagem(quadroCodificado, 0.8);
-            dadosImagem = codificarJpeg(escritor, parametros, quadroCodificado, qualidade);
+            qualidade = Math.max(0.1f, qualidade * 0.85f);
+            quadroCodificado = redimensionarImagem(quadroCodificado, 0.85);
+            dadosImagem = codificarJpeg(escritor, parametros, quadroCodificado, qualidade,
+                    tamanhoMaximoQuadro);
         }
         return dadosImagem;
     }
 
+    /** Calcula o tamanho de quadro que ocupa no maximo cerca de 200 ms do bitrate atual. */
+    private int calcularTamanhoMaximoQuadro() {
+        return Math.max(32 * 1024, Math.min(128 * 1024, limiteAdaptadoBytesPorSegundo / 5));
+    }
+
     /** Codifica uma imagem em JPEG usando a qualidade solicitada. */
     private byte[] codificarJpeg(ImageWriter escritor, ImageWriteParam parametros,
-            BufferedImage quadro, float qualidade) throws Exception {
+            BufferedImage quadro, float qualidade, int tamanhoEsperado) throws Exception {
         parametros.setCompressionQuality(qualidade);
-        ByteArrayOutputStream fluxoDados = new ByteArrayOutputStream(TAMANHO_MAXIMO_QUADRO);
+        ByteArrayOutputStream fluxoDados = new ByteArrayOutputStream(tamanhoEsperado);
         try (ImageOutputStream fluxoImagem = ImageIO.createImageOutputStream(fluxoDados)) {
             escritor.setOutput(fluxoImagem);
             escritor.write(null, new IIOImage(quadro, null, null), parametros);
