@@ -24,7 +24,7 @@ import javafx.scene.paint.Color;
 import javafx.stage.Stage;
     
 import com.sicad.remote.RemoteDesktopClient;
-import com.sicad.remote.ScreenCaster;
+import com.sicad.remote.ScreenCaster; // Trigger LS refresh
 import com.sicad.remote.InputReceiver;
 import java.awt.Robot;
 

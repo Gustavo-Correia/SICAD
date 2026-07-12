@@ -8,8 +8,6 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import javafx.application.Platform;
-import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonType;
 
 public class RemoteDesktopServer {
     public static final int PORT = 5005;
@@ -87,6 +85,11 @@ public class RemoteDesktopServer {
         try {
             System.out.println("Sessão remota iniciada com: " + clientSocket.getInetAddress());
             
+            // LIMITA O BUFFER TCP PARA PREVENIR BUFFER BLOAT (LAG/PING ALTO)
+            // Isso força o ScreenCaster a pular quadros automaticamente quando a rede está lenta
+            clientSocket.setSendBufferSize(64 * 1024);
+            clientSocket.setTcpNoDelay(true);
+
             // Usamos DataOutputStream para o vídeo pois precisamos enviar o tamanho e depois os bytes brutos
             DataOutputStream dataOut = new DataOutputStream(clientSocket.getOutputStream());
             

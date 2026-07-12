@@ -31,7 +31,8 @@ public class ScreenCaster implements Runnable {
             java.util.Properties props = com.sicad.GerenciadorConfiguracoes.carregarConfiguracoes();
             this.maxFps = Integer.parseInt(props.getProperty("caster.fps", "15"));
             this.targetDelayMs = 1000 / this.maxFps;
-            this.compressionQuality = Float.parseFloat(props.getProperty("caster.quality", "0.55"));
+            // Forçamos uma qualidade maior (0.75) porque a imagem será reduzida
+            this.compressionQuality = 0.75f;
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações no ScreenCaster: " + e.getMessage());
         }
@@ -53,9 +54,12 @@ public class ScreenCaster implements Runnable {
             while (running) {
                 long startTime = System.currentTimeMillis();
                 BufferedImage capture = robot.createScreenCapture(screenRect);
+                
+                // Redimensiona a imagem para 65% do tamanho original (Reduz drasticamente o peso de bytes sem perder tanta qualidade)
+                BufferedImage scaled = scaleImage(capture, 0.65);
 
                 // Compara frame atual com anterior. Se for igual (ex: tela parada), não envia
-                if (isFrameSimilar(capture, lastFrame)) {
+                if (isFrameSimilar(scaled, lastFrame)) {
                     // Espera o tempo restante do frame rate
                     long elapsed = System.currentTimeMillis() - startTime;
                     long sleepTime = targetDelayMs - elapsed;
@@ -65,12 +69,12 @@ public class ScreenCaster implements Runnable {
                     continue;
                 }
 
-                lastFrame = capture;
+                lastFrame = scaled;
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 try (ImageOutputStream ios = ImageIO.createImageOutputStream(baos)) {
                     writer.setOutput(ios);
-                    writer.write(null, new IIOImage(capture, null, null), param);
+                    writer.write(null, new IIOImage(scaled, null, null), param);
                 }
 
                 byte[] imageBytes = baos.toByteArray();
@@ -149,5 +153,16 @@ public class ScreenCaster implements Runnable {
             }
         }
         return true;
+    }
+
+    private BufferedImage scaleImage(BufferedImage original, double scale) {
+        int w = (int) (original.getWidth() * scale);
+        int h = (int) (original.getHeight() * scale);
+        BufferedImage resized = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = resized.createGraphics();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(original, 0, 0, w, h, null);
+        g.dispose();
+        return resized;
     }
 }
