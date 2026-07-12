@@ -22,7 +22,10 @@ import javafx.scene.control.Button;
 import javafx.geometry.Pos;
 import javafx.scene.input.*;
 import java.io.File;
+import java.net.InetSocketAddress;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class RemoteDesktopClient {
     private final String targetHost;
@@ -35,6 +38,10 @@ public class RemoteDesktopClient {
     private Circle pingDot;
     private Label pingLbl;
     private ClipboardSync clipboardSync;
+    private final Object monitorQuadroCodificado = new Object();
+    private byte[] quadroCodificadoPendente;
+    private final AtomicReference<Image> imagemPendente = new AtomicReference<>();
+    private final AtomicBoolean atualizacaoImagemAgendada = new AtomicBoolean();
 
     public RemoteDesktopClient(String targetId, String localId) {
         this.targetId = targetId;
@@ -50,10 +57,13 @@ public class RemoteDesktopClient {
         this.localId = null;
     }
 
-    public void connectRelay(String serverHost, int serverPort) {
+    /** Conecta ao relay usando buffers limitados para reduzir o acúmulo de dados antigos. */
+    public void conectarRelay(String hostServidor, int portaServidor) {
         new Thread(() -> {
             try {
-                socket = new Socket(serverHost, serverPort);
+                socket = new Socket();
+                configurarSocketBaixaLatencia(socket);
+                socket.connect(new InetSocketAddress(hostServidor, portaServidor));
                 out = new PrintWriter(socket.getOutputStream(), true);
                 java.io.InputStream inStream = socket.getInputStream();
 
@@ -83,7 +93,7 @@ public class RemoteDesktopClient {
                 Platform.runLater(this::createRemoteWindow);
 
                 DataInputStream dataIn = new DataInputStream(inStream);
-                startVideoLoop(dataIn);
+                iniciarFluxoVideo(dataIn);
 
             } catch (Exception e) {
                 Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar via relay: " + e.getMessage()));
@@ -91,10 +101,13 @@ public class RemoteDesktopClient {
         }, "remote-client-relay").start();
     }
 
-    public void connect() {
+    /** Conecta diretamente ao host usando a mesma configuracao de baixa latencia do relay. */
+    public void conectar() {
         new Thread(() -> {
             try {
-                socket = new Socket(targetHost, targetPort);
+                socket = new Socket();
+                configurarSocketBaixaLatencia(socket);
+                socket.connect(new InetSocketAddress(targetHost, targetPort));
                 out = new PrintWriter(socket.getOutputStream(), true);
                 java.io.InputStream inStream = socket.getInputStream();
 
@@ -114,7 +127,7 @@ public class RemoteDesktopClient {
                 Platform.runLater(this::createRemoteWindow);
                 
                 DataInputStream dataIn = new DataInputStream(inStream);
-                startVideoLoop(dataIn);
+                iniciarFluxoVideo(dataIn);
 
             } catch (Exception e) {
                 Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar a: " + targetHost + ":" + targetPort + "\n" + e.getMessage()));
@@ -202,6 +215,7 @@ public class RemoteDesktopClient {
         return new javafx.geometry.Point2D(mappedX, mappedY);
     }
 
+    /** Cria a janela de visualizacao e registra os controles da sessao remota. */
     private void createRemoteWindow() {
         Stage stage = new Stage();
         stage.setTitle("Acesso Remoto - ID: " + targetId);
@@ -234,7 +248,7 @@ public class RemoteDesktopClient {
         Button btnDisconnect = new Button("Desconectar");
         btnDisconnect.setStyle("-fx-background-color: #EF4444; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 15; -fx-padding: 5 15; -fx-cursor: hand;");
         btnDisconnect.setOnAction(e -> {
-            disconnect();
+            desconectar();
             stage.close();
         });
 
@@ -322,40 +336,41 @@ public class RemoteDesktopClient {
         // Configura Drag & Drop de arquivos
         configurarDragAndDrop(imageContainer);
  
-        stage.setOnCloseRequest(e -> disconnect());
+        stage.setOnCloseRequest(e -> desconectar());
         stage.setScene(scene);
         stage.show();
     }
  
-    private void startVideoLoop(DataInputStream dataIn) {
+    /** Le o protocolo binario e substitui qualquer quadro codificado que ainda nao foi decodificado. */
+    private void iniciarFluxoVideo(DataInputStream entradaDados) {
+        Thread tarefaDecodificacao = new Thread(this::decodificarQuadros, "decodificacao-quadros");
+        tarefaDecodificacao.start();
+
         new Thread(() -> {
             try {
                 while (running) {
-                    int length = dataIn.readInt();
-                    if (length > 0) {
-                        byte[] imageBytes = new byte[length];
-                        dataIn.readFully(imageBytes);
-                        
-                        Image img = new Image(new ByteArrayInputStream(imageBytes));
-                        Platform.runLater(() -> {
-                            if (imageView != null) {
-                                imageView.setImage(img);
-                                adjustStageSize(img);
-                            }
-                        });
-                    } else if (length == -1) {
+                    int tamanho = entradaDados.readInt();
+                    if (tamanho > 0) {
+                        byte[] dadosImagem = new byte[tamanho];
+                        entradaDados.readFully(dadosImagem);
+
+                        synchronized (monitorQuadroCodificado) {
+                            quadroCodificadoPendente = dadosImagem;
+                            monitorQuadroCodificado.notify();
+                        }
+                    } else if (tamanho == -1) {
                         // Resposta do Ping RTT
-                        long originalTimestamp = dataIn.readLong();
-                        long rtt = System.currentTimeMillis() - originalTimestamp;
-                        atualizarPing(rtt);
-                    } else if (length == -2) {
+                        long instanteOriginal = entradaDados.readLong();
+                        long latencia = System.currentTimeMillis() - instanteOriginal;
+                        atualizarPing(latencia);
+                    } else if (tamanho == -2) {
                         // Sincronização do Clipboard vindo do Host
-                        int textLen = dataIn.readInt();
-                        byte[] textBytes = new byte[textLen];
-                        dataIn.readFully(textBytes);
-                        String text = new String(textBytes, "UTF-8");
+                        int tamanhoTexto = entradaDados.readInt();
+                        byte[] dadosTexto = new byte[tamanhoTexto];
+                        entradaDados.readFully(dadosTexto);
+                        String texto = new String(dadosTexto, "UTF-8");
                         if (clipboardSync != null) {
-                            clipboardSync.aplicarTextoRemoto(text);
+                            clipboardSync.aplicarTextoRemoto(texto);
                         }
                     }
                 }
@@ -366,9 +381,69 @@ public class RemoteDesktopClient {
                         mostrarErro("Conexão Perdida", "A sessão remota foi encerrada.");
                     });
                 }
-                disconnect();
+                desconectar();
+            } finally {
+                synchronized (monitorQuadroCodificado) {
+                    monitorQuadroCodificado.notifyAll();
+                }
             }
         }, "remote-client-video").start();
+    }
+
+    /** Decodifica somente o JPEG mais recente e descarta quadros substituidos durante o processamento. */
+    private void decodificarQuadros() {
+        try {
+            while (running) {
+                byte[] dadosImagem;
+                synchronized (monitorQuadroCodificado) {
+                    while (running && quadroCodificadoPendente == null) {
+                        monitorQuadroCodificado.wait();
+                    }
+                    dadosImagem = quadroCodificadoPendente;
+                    quadroCodificadoPendente = null;
+                }
+
+                if (dadosImagem != null) {
+                    Image imagem = new Image(new ByteArrayInputStream(dadosImagem));
+                    publicarImagemMaisRecente(imagem);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            if (running) {
+                System.out.println("Erro ao decodificar quadro remoto: " + e.getMessage());
+            }
+        }
+    }
+
+    /** Guarda a imagem mais recente e garante no maximo uma atualizacao pendente no JavaFX. */
+    private void publicarImagemMaisRecente(Image imagem) {
+        imagemPendente.set(imagem);
+        if (atualizacaoImagemAgendada.compareAndSet(false, true)) {
+            Platform.runLater(this::exibirImagemMaisRecente);
+        }
+    }
+
+    /** Exibe o ultimo quadro disponivel e reagenda apenas se outro chegou durante a renderizacao. */
+    private void exibirImagemMaisRecente() {
+        Image imagem = imagemPendente.getAndSet(null);
+        if (imagem != null && imageView != null) {
+            imageView.setImage(imagem);
+            adjustStageSize(imagem);
+        }
+
+        atualizacaoImagemAgendada.set(false);
+        if (imagemPendente.get() != null && atualizacaoImagemAgendada.compareAndSet(false, true)) {
+            Platform.runLater(this::exibirImagemMaisRecente);
+        }
+    }
+
+    /** Configura o socket antes da conexao para limitar filas TCP sem desabilitar o fluxo confiavel. */
+    private void configurarSocketBaixaLatencia(Socket socketConfigurado) throws Exception {
+        socketConfigurado.setTcpNoDelay(true);
+        socketConfigurado.setSendBufferSize(64 * 1024);
+        socketConfigurado.setReceiveBufferSize(64 * 1024);
     }
 
     private void sendCommand(String command) {
@@ -437,8 +512,12 @@ public class RemoteDesktopClient {
         });
     }
 
-    private void disconnect() {
+    /** Encerra a sessao e libera as threads que aguardam dados de video. */
+    private void desconectar() {
         running = false;
+        synchronized (monitorQuadroCodificado) {
+            monitorQuadroCodificado.notifyAll();
+        }
         if (clipboardSync != null) {
             clipboardSync.stop();
         }

@@ -81,6 +81,7 @@ public class RemoteDesktopServer {
         }, "remote-server-auth").start();
     }
 
+    /** Inicia captura e controle remoto no socket aceito com buffers TCP limitados. */
     private void iniciarSessao(Socket clientSocket) {
         try {
             System.out.println("Sessão remota iniciada com: " + clientSocket.getInetAddress());
@@ -88,13 +89,14 @@ public class RemoteDesktopServer {
             // LIMITA O BUFFER TCP PARA PREVENIR BUFFER BLOAT (LAG/PING ALTO)
             // Isso força o ScreenCaster a pular quadros automaticamente quando a rede está lenta
             clientSocket.setSendBufferSize(64 * 1024);
+            clientSocket.setReceiveBufferSize(64 * 1024);
             clientSocket.setTcpNoDelay(true);
 
             // Usamos DataOutputStream para o vídeo pois precisamos enviar o tamanho e depois os bytes brutos
             DataOutputStream dataOut = new DataOutputStream(clientSocket.getOutputStream());
             
             ScreenCaster caster = new ScreenCaster(dataOut, robot);
-            InputReceiver receiver = new InputReceiver(clientSocket, robot);
+            InputReceiver receiver = new InputReceiver(clientSocket, dataOut, robot);
 
             Thread casterThread = new Thread(caster, "screen-caster");
             Thread receiverThread = new Thread(receiver, "input-receiver");
@@ -105,7 +107,7 @@ public class RemoteDesktopServer {
             // Monitora a conexão
             receiverThread.join(); // Quando o receiver cair, a sessão acabou
             
-            caster.stopCasting();
+            caster.pararTransmissao();
             clientSocket.close();
             System.out.println("Sessão remota encerrada.");
 

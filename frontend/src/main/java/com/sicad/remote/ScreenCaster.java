@@ -6,6 +6,8 @@ import java.awt.Toolkit;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Properties;
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
@@ -13,156 +15,209 @@ import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageOutputStream;
 
 public class ScreenCaster implements Runnable {
-    private final DataOutputStream out;
-    private final Robot robot;
-    private volatile boolean running = true;
-    private BufferedImage lastFrame = null;
-    
-    // Qualidade de compactação JPEG (0.0 a 1.0) e FPS dinâmicos
-    private float compressionQuality = 0.55f;
-    private int maxFps = 15;
-    private int targetDelayMs = 1000 / maxFps; // ~66ms por frame
+    private static final double ESCALA_TRANSMISSAO = 0.65;
 
-    public ScreenCaster(DataOutputStream out, Robot robot) {
-        this.out = out;
-        this.robot = robot;
-        
+    private final DataOutputStream saida;
+    private final Robot robo;
+    private final Object monitorQuadro = new Object();
+    private volatile boolean emExecucao = true;
+    private BufferedImage quadroPendente;
+    private BufferedImage ultimoQuadroEnviado;
+    private float qualidadeCompressao = 0.55f;
+    private int quadrosPorSegundo = 15;
+    private int intervaloCapturaMs = 1000 / quadrosPorSegundo;
+
+    /** Cria o transmissor e carrega os limites de captura e compressao configurados. */
+    public ScreenCaster(DataOutputStream saida, Robot robo) {
+        this.saida = saida;
+        this.robo = robo;
+
         try {
-            java.util.Properties props = com.sicad.GerenciadorConfiguracoes.carregarConfiguracoes();
-            this.maxFps = Integer.parseInt(props.getProperty("caster.fps", "15"));
-            this.targetDelayMs = 1000 / this.maxFps;
-            // Forçamos uma qualidade maior (0.75) porque a imagem será reduzida
-            this.compressionQuality = 0.75f;
+            Properties configuracoes = com.sicad.GerenciadorConfiguracoes.carregarConfiguracoes();
+            this.quadrosPorSegundo = Math.max(1, Math.min(60,
+                    Integer.parseInt(configuracoes.getProperty("caster.fps", "15"))));
+            this.intervaloCapturaMs = 1000 / this.quadrosPorSegundo;
+            float qualidadeConfigurada = Float.parseFloat(configuracoes.getProperty("caster.quality", "0.55"));
+            this.qualidadeCompressao = Math.max(0.1f, Math.min(1.0f, qualidadeConfigurada));
         } catch (Exception e) {
-            System.out.println("Erro ao carregar configurações no ScreenCaster: " + e.getMessage());
+            System.out.println("Erro ao carregar configuracoes no transmissor de tela: " + e.getMessage());
         }
     }
 
-    public void stopCasting() {
-        this.running = false;
+    /** Interrompe a captura e acorda a transmissao caso ela esteja aguardando um quadro. */
+    public void pararTransmissao() {
+        this.emExecucao = false;
+        synchronized (monitorQuadro) {
+            monitorQuadro.notifyAll();
+        }
     }
 
+    /** Captura a tela na taxa configurada e conserva somente o quadro mais recente. */
     @Override
     public void run() {
+        Rectangle areaTela = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
+        Thread tarefaTransmissao = new Thread(this::transmitirQuadros, "transmissao-quadros");
+        tarefaTransmissao.start();
+
         try {
-            Rectangle screenRect = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
-            ImageWriter writer = ImageIO.getImageWritersByFormatName("jpg").next();
-            ImageWriteParam param = writer.getDefaultWriteParam();
-            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-            param.setCompressionQuality(compressionQuality);
+            while (emExecucao) {
+                long inicioCaptura = System.nanoTime();
+                BufferedImage captura = robo.createScreenCapture(areaTela);
 
-            while (running) {
-                long startTime = System.currentTimeMillis();
-                BufferedImage capture = robot.createScreenCapture(screenRect);
-                
-                // Redimensiona a imagem para 65% do tamanho original (Reduz drasticamente o peso de bytes sem perder tanta qualidade)
-                BufferedImage scaled = scaleImage(capture, 0.65);
+                synchronized (monitorQuadro) {
+                    quadroPendente = captura;
+                    monitorQuadro.notify();
+                }
 
-                // Compara frame atual com anterior. Se for igual (ex: tela parada), não envia
-                if (isFrameSimilar(scaled, lastFrame)) {
-                    // Espera o tempo restante do frame rate
-                    long elapsed = System.currentTimeMillis() - startTime;
-                    long sleepTime = targetDelayMs - elapsed;
-                    if (sleepTime > 0) {
-                        Thread.sleep(sleepTime);
-                    }
+                long duracaoMs = (System.nanoTime() - inicioCaptura) / 1_000_000L;
+                long esperaMs = intervaloCapturaMs - duracaoMs;
+                if (esperaMs > 0) {
+                    Thread.sleep(esperaMs);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            if (emExecucao) {
+                System.out.println("Captura de tela encerrada: " + e.getMessage());
+            }
+        } finally {
+            pararTransmissao();
+            try {
+                tarefaTransmissao.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /** Codifica e envia o quadro mais novo disponivel, descartando capturas substituidas. */
+    private void transmitirQuadros() {
+        ImageWriter escritor = ImageIO.getImageWritersByFormatName("jpg").next();
+        ImageWriteParam parametros = escritor.getDefaultWriteParam();
+        parametros.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        parametros.setCompressionQuality(qualidadeCompressao);
+
+        try {
+            while (emExecucao) {
+                BufferedImage captura = aguardarQuadroMaisRecente();
+                if (captura == null) {
                     continue;
                 }
 
-                lastFrame = scaled;
+                BufferedImage quadroRedimensionado = redimensionarImagem(captura, ESCALA_TRANSMISSAO);
+                if (quadrosSaoSimilares(quadroRedimensionado, ultimoQuadroEnviado)) {
+                    continue;
+                }
+                ultimoQuadroEnviado = quadroRedimensionado;
 
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                try (ImageOutputStream ios = ImageIO.createImageOutputStream(baos)) {
-                    writer.setOutput(ios);
-                    writer.write(null, new IIOImage(scaled, null, null), param);
+                ByteArrayOutputStream fluxoDados = new ByteArrayOutputStream();
+                try (ImageOutputStream fluxoImagem = ImageIO.createImageOutputStream(fluxoDados)) {
+                    escritor.setOutput(fluxoImagem);
+                    escritor.write(null, new IIOImage(quadroRedimensionado, null, null), parametros);
                 }
 
-                byte[] imageBytes = baos.toByteArray();
-                
-                // Envia de forma sincronizada para evitar misturar com pacotes de controle
-                synchronized (out) {
-                    out.writeInt(imageBytes.length);
-                    out.write(imageBytes);
-                    out.flush();
-                }
-                
-                // Controle preciso de taxa de quadros (FPS)
-                long elapsed = System.currentTimeMillis() - startTime;
-                long sleepTime = targetDelayMs - elapsed;
-                if (sleepTime > 0) {
-                    Thread.sleep(sleepTime);
+                byte[] dadosImagem = fluxoDados.toByteArray();
+                synchronized (saida) {
+                    saida.writeInt(dadosImagem.length);
+                    saida.write(dadosImagem);
+                    saida.flush();
                 }
             }
-            writer.dispose();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
-            System.out.println("ScreenCaster encerrado: " + e.getMessage());
+            if (emExecucao) {
+                System.out.println("Transmissao de tela encerrada: " + e.getMessage());
+            }
+        } finally {
+            escritor.dispose();
+            pararTransmissao();
         }
     }
 
-    public static void enviarPong(DataOutputStream out, long timestamp) {
+    /** Aguarda uma captura e retira atomicamente apenas a versao mais recente. */
+    private BufferedImage aguardarQuadroMaisRecente() throws InterruptedException {
+        synchronized (monitorQuadro) {
+            while (emExecucao && quadroPendente == null) {
+                monitorQuadro.wait();
+            }
+            BufferedImage quadro = quadroPendente;
+            quadroPendente = null;
+            return quadro;
+        }
+    }
+
+    /** Envia a resposta do medidor de latencia pelo mesmo fluxo binario dos quadros. */
+    public static void enviarPong(DataOutputStream saida, long instanteOriginal) {
+        if (saida == null) {
+            return;
+        }
         try {
-            synchronized (out) {
-                out.writeInt(-1); // Header especial para Ping RTT
-                out.writeLong(timestamp);
-                out.flush();
+            synchronized (saida) {
+                saida.writeInt(-1);
+                saida.writeLong(instanteOriginal);
+                saida.flush();
             }
         } catch (Exception e) {
-            System.out.println("Erro ao enviar PONG: " + e.getMessage());
+            System.out.println("Erro ao enviar resposta de latencia: " + e.getMessage());
         }
     }
 
-    public static void enviarClipboard(DataOutputStream out, String texto) {
+    /** Envia o texto da area de transferencia no protocolo binario da sessao. */
+    public static void enviarClipboard(DataOutputStream saida, String texto) {
+        if (saida == null) {
+            return;
+        }
         try {
-            synchronized (out) {
-                byte[] bytes = texto.getBytes("UTF-8");
-                out.writeInt(-2); // Header especial para Clipboard
-                out.writeInt(bytes.length);
-                out.write(bytes);
-                out.flush();
+            synchronized (saida) {
+                byte[] dadosTexto = texto.getBytes(StandardCharsets.UTF_8);
+                saida.writeInt(-2);
+                saida.writeInt(dadosTexto.length);
+                saida.write(dadosTexto);
+                saida.flush();
             }
         } catch (Exception e) {
-            System.out.println("Erro ao enviar Clipboard: " + e.getMessage());
+            System.out.println("Erro ao enviar area de transferencia: " + e.getMessage());
         }
     }
 
-    /**
-     * Compara de forma ultra-rápida (amostragem) se o novo frame é similar ao anterior
-     */
-    private boolean isFrameSimilar(BufferedImage img1, BufferedImage img2) {
-        if (img1 == null || img2 == null) return false;
-        if (img1.getWidth() != img2.getWidth() || img1.getHeight() != img2.getHeight()) return false;
+    /** Compara amostras de dois quadros para evitar transmitir uma tela sem alteracoes. */
+    private boolean quadrosSaoSimilares(BufferedImage primeiro, BufferedImage segundo) {
+        if (primeiro == null || segundo == null) {
+            return false;
+        }
+        if (primeiro.getWidth() != segundo.getWidth() || primeiro.getHeight() != segundo.getHeight()) {
+            return false;
+        }
 
-        int w = img1.getWidth();
-        int h = img1.getHeight();
+        int largura = primeiro.getWidth();
+        int altura = primeiro.getHeight();
+        int passo = 10;
+        int diferencas = 0;
+        int totalAmostras = ((largura + passo - 1) / passo) * ((altura + passo - 1) / passo);
+        int limiteDiferencas = Math.max(1, (int) (totalAmostras * 0.0015));
 
-        // Escaneia pulando de 10 em 10 pixels (horizontal/vertical)
-        int step = 10;
-        int diffs = 0;
-        int totalSampled = 0;
-
-        for (int y = 0; y < h; y += step) {
-            for (int x = 0; x < w; x += step) {
-                totalSampled++;
-                if (img1.getRGB(x, y) != img2.getRGB(x, y)) {
-                    diffs++;
-                    // Se mais que 0.15% dos pixels amostrados mudaram, envia o frame
-                    if (diffs > (totalSampled * 0.0015)) {
-                        return false;
-                    }
+        for (int y = 0; y < altura; y += passo) {
+            for (int x = 0; x < largura; x += passo) {
+                if (primeiro.getRGB(x, y) != segundo.getRGB(x, y) && ++diferencas > limiteDiferencas) {
+                    return false;
                 }
             }
         }
         return true;
     }
 
-    private BufferedImage scaleImage(BufferedImage original, double scale) {
-        int w = (int) (original.getWidth() * scale);
-        int h = (int) (original.getHeight() * scale);
-        BufferedImage resized = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-        java.awt.Graphics2D g = resized.createGraphics();
-        g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g.drawImage(original, 0, 0, w, h, null);
-        g.dispose();
-        return resized;
+    /** Reduz a resolucao do quadro antes da codificacao JPEG para limitar o trafego. */
+    private BufferedImage redimensionarImagem(BufferedImage original, double escala) {
+        int largura = (int) (original.getWidth() * escala);
+        int altura = (int) (original.getHeight() * escala);
+        BufferedImage redimensionada = new BufferedImage(largura, altura, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D graficos = redimensionada.createGraphics();
+        graficos.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        graficos.drawImage(original, 0, 0, largura, altura, null);
+        graficos.dispose();
+        return redimensionada;
     }
 }

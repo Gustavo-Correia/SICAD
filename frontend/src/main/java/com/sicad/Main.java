@@ -256,12 +256,16 @@ public class Main extends Application {
         }, "carregar-stats").start();
     }
 
+    /** Mantem o host registrado no relay e inicia uma sessao remota com buffers de baixa latencia. */
     private void iniciarRelayHost(String id) {
         new Thread(() -> {
             while (!Thread.interrupted()) {
                 try {
                     // Relay SEMPRE via remoto (bore) para que viewers remotos consigam fazer bridge
                     Socket sock = new Socket();
+                    sock.setTcpNoDelay(true);
+                    sock.setSendBufferSize(64 * 1024);
+                    sock.setReceiveBufferSize(64 * 1024);
                     sock.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
                     relaySocket = sock;
                     PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
@@ -317,7 +321,7 @@ public class Main extends Application {
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                         }
-                        caster.stopCasting();
+                        caster.pararTransmissao();
                         System.out.println("Sessão remota encerrada via relay.");
                     } else {
                         os.write("REJECTED:Acesso negado pelo usuario\n".getBytes());
@@ -593,6 +597,7 @@ public class Main extends Application {
         return card;
     }
 
+    /** Cria o cartao usado para informar o ID e iniciar uma conexao remota. */
     private VBox createConnectCard() {
         VBox card = new VBox(15);
         card.getStyleClass().add("card");
@@ -675,7 +680,7 @@ public class Main extends Application {
 
                 RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
                 // Relay SEMPRE via remoto (bore) para fazer bridge com o host registrado
-                client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                client.conectarRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
             }).start();
         });
 
