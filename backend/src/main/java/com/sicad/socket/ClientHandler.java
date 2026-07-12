@@ -28,13 +28,25 @@ public class ClientHandler implements Runnable {
         System.out.println("Cliente conectado: " + clientIp + ":" + socket.getPort());
 
         try {
+            socket.setSoTimeout(10_000);
             String primeiraLinha = lerLinha(socket.getInputStream());
+            socket.setSoTimeout(0);
 
             if (primeiraLinha == null) {
                 return;
             }
 
             // Os comandos de relay precisam ser lidos antes de usar um leitor com buffer.
+            if (primeiraLinha.startsWith("REGISTRAR_CANAL_RELAY:")) {
+                processarRegistroCanalRelay(primeiraLinha.substring("REGISTRAR_CANAL_RELAY:".length()).trim());
+                return;
+            }
+
+            if (primeiraLinha.startsWith("CONECTAR_CANAL_RELAY:")) {
+                processarConexaoCanalRelay(primeiraLinha.substring("CONECTAR_CANAL_RELAY:".length()).trim());
+                return;
+            }
+
             if (primeiraLinha.startsWith("REGISTER_RELAY:")) {
                 handleRelayRegister(primeiraLinha.substring(15).trim());
                 return;
@@ -73,13 +85,17 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private String lerLinha(InputStream in) throws Exception {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        int b;
-        while ((b = in.read()) != -1 && b != '\n') {
-            baos.write(b);
+    /** Le uma linha curta do protocolo e rejeita entradas que possam consumir memoria sem limite. */
+    private String lerLinha(InputStream entrada) throws Exception {
+        ByteArrayOutputStream conteudo = new ByteArrayOutputStream();
+        int byteLido;
+        while ((byteLido = entrada.read()) != -1 && byteLido != '\n') {
+            if (conteudo.size() >= 4096) {
+                throw new IllegalArgumentException("Linha de protocolo muito extensa");
+            }
+            conteudo.write(byteLido);
         }
-        return baos.size() > 0 ? baos.toString("UTF-8").trim() : null;
+        return conteudo.size() > 0 ? conteudo.toString("UTF-8").trim() : null;
     }
 
     private void handleRelayRegister(String relayId) throws Exception {
@@ -94,115 +110,161 @@ public class ClientHandler implements Runnable {
         }
     }
 
+    /** Mantem um canal do host disponivel no relay sem criar IDs artificiais no banco. */
+    private void processarRegistroCanalRelay(String parametros) throws Exception {
+        String[] partes = parametros.split(":", 2);
+        if (partes.length != 2 || partes[0].isBlank() || !canalValido(partes[1])) {
+            throw new IllegalArgumentException("Registro de canal relay invalido");
+        }
+
+        String id = partes[0];
+        String canal = partes[1];
+        RelayManager.registrarCanal(id, canal, socket);
+        try {
+            while (!Thread.currentThread().isInterrupted() && !socket.isClosed()) {
+                Thread.sleep(1000);
+            }
+        } finally {
+            RelayManager.removerCanalSeMesmo(id, canal, socket);
+        }
+    }
+
+    /** Reserva o canal solicitado e cria uma ponte exclusiva entre cliente visualizador e host. */
+    private void processarConexaoCanalRelay(String parametros) throws Exception {
+        String[] partes = parametros.split(":", 2);
+        if (partes.length != 2 || partes[0].isBlank() || !canalValido(partes[1])) {
+            enviarErroRelay("Canal invalido");
+            return;
+        }
+
+        String idAlvo = partes[0];
+        String canal = partes[1];
+        Socket socketAlvo = RelayManager.retirarCanal(idAlvo, canal);
+        if (!socketDisponivel(socketAlvo)) {
+            if (socketAlvo != null) {
+                fecharSocket(socketAlvo);
+            }
+            enviarErroRelay("Canal " + canal + " indisponivel");
+            return;
+        }
+
+        criarPonteRelay(socketAlvo, idAlvo + " [" + canal + "]");
+    }
+
+    /** Confirma se o nome recebido representa um dos dois canais suportados. */
+    private boolean canalValido(String canal) {
+        return "CONTROLE".equals(canal) || "VIDEO".equals(canal);
+    }
+
+    /** Verifica se um socket reservado ainda pode participar de uma ponte. */
+    private boolean socketDisponivel(Socket socketVerificado) {
+        return socketVerificado != null && socketVerificado.isConnected() && !socketVerificado.isClosed();
+    }
+
+    /** Envia ao cliente uma falha de negociacao antes de iniciar a ponte relay. */
+    private void enviarErroRelay(String mensagem) throws Exception {
+        OutputStream saidaErro = socket.getOutputStream();
+        saidaErro.write(("ERRO:" + mensagem + "\n").getBytes());
+        saidaErro.flush();
+    }
+
     /** Autentica e cria uma ponte bidirecional com buffers limitados para a sessao remota. */
     private void processarConexaoRelay(String idAlvo) throws Exception {
         Socket socketAlvo = RelayManager.get(idAlvo);
-        if (socketAlvo == null || socketAlvo.isClosed() || !socketAlvo.isConnected()) {
+        if (!socketDisponivel(socketAlvo)) {
             if (socketAlvo != null) {
                 RelayManager.unregister(idAlvo);
             }
-            OutputStream saidaErro = socket.getOutputStream();
-            saidaErro.write("ERRO:Alvo n\u00e3o dispon\u00edvel\n".getBytes());
-            saidaErro.flush();
+            enviarErroRelay("Alvo nao disponivel");
             return;
         }
 
-        configurarSocketBaixaLatencia(socket);
-        configurarSocketBaixaLatencia(socketAlvo);
+        criarPonteRelay(socketAlvo, idAlvo);
+    }
 
-        System.out.println("Criando ponte relay: " + clientIp + " -> " + idAlvo);
-        System.out.println("Estado do socket alvo: fechado=" + socketAlvo.isClosed() + " conectado=" + socketAlvo.isConnected());
-
-        InputStream entradaCliente = socket.getInputStream();
-        OutputStream saidaCliente = socket.getOutputStream();
-        InputStream entradaAlvo = socketAlvo.getInputStream();
-        OutputStream saidaAlvo = socketAlvo.getOutputStream();
-
-        // Envia confirmação de que a ponte foi iniciada para desbloquear o cliente (evita deadlock)
-        saidaCliente.write("OK\n".getBytes());
-        saidaCliente.flush();
-
-        // Recebe a autenticacao do cliente e a encaminha ao dispositivo alvo.
-        String linhaAutenticacao;
-        {
-            ByteArrayOutputStream conteudoLinha = new ByteArrayOutputStream();
-            int byteLido;
-            while ((byteLido = entradaCliente.read()) != -1 && byteLido != '\n') {
-                conteudoLinha.write(byteLido);
-            }
-            linhaAutenticacao = conteudoLinha.toString("UTF-8").trim();
-        }
-        System.out.println("Ponte recebeu AUTH: '" + linhaAutenticacao + "'");
-
-        if (linhaAutenticacao.isEmpty() || !linhaAutenticacao.startsWith("AUTH:")) {
-            System.out.println("Ponte rejeitada: autenticacao invalida");
-            saidaCliente.write("REJECTED:Autentica\u00e7\u00e3o inv\u00e1lida\n".getBytes());
-            saidaCliente.flush();
-            return;
-        }
-
-        System.out.println("Ponte encaminhando AUTH ao alvo...");
-        saidaAlvo.write((linhaAutenticacao + "\n").getBytes());
-        saidaAlvo.flush();
-
-        // Repassa ao cliente a resposta de aceitacao ou rejeicao recebida do alvo.
-        String resposta;
-        {
-            ByteArrayOutputStream conteudoLinha = new ByteArrayOutputStream();
-            int byteLido;
-            while ((byteLido = entradaAlvo.read()) != -1 && byteLido != '\n') {
-                conteudoLinha.write(byteLido);
-            }
-            resposta = conteudoLinha.toString("UTF-8").trim();
-        }
-        System.out.println("Ponte recebeu resposta do alvo: '" + resposta + "'");
-
-        saidaCliente.write((resposta + "\n").getBytes());
-        saidaCliente.flush();
-
-        if (!resposta.startsWith("ACCEPTED")) {
-            System.out.println("Ponte recusada pelo dispositivo alvo");
-            return;
-        }
-        System.out.println("Ponte aceita; iniciando retransmissao bidirecional...");
-
-        closeOnExit = false;
-
-        CountDownLatch ponteEncerrada = new CountDownLatch(1);
-
-        Thread clienteParaAlvo = new Thread(() -> {
-            try {
-                retransmitir(entradaCliente, saidaAlvo);
-            } catch (Exception e) {
-                // O fechamento de qualquer sentido encerra toda a ponte.
-            } finally {
-                ponteEncerrada.countDown();
-            }
-        }, "relay-cliente-para-alvo-" + idAlvo);
-
-        Thread alvoParaCliente = new Thread(() -> {
-            try {
-                retransmitir(entradaAlvo, saidaCliente);
-            } catch (Exception e) {
-                // O fechamento de qualquer sentido encerra toda a ponte.
-            } finally {
-                ponteEncerrada.countDown();
-            }
-        }, "relay-alvo-para-cliente-" + idAlvo);
-
-        clienteParaAlvo.start();
-        alvoParaCliente.start();
-
+    /** Encaminha a autenticacao e retransmite os dois sentidos de uma conexao relay. */
+    private void criarPonteRelay(Socket socketAlvo, String descricaoAlvo) throws Exception {
         try {
+            configurarSocketBaixaLatencia(socket);
+            configurarSocketBaixaLatencia(socketAlvo);
+            socket.setSoTimeout(70_000);
+            socketAlvo.setSoTimeout(70_000);
+
+            System.out.println("Criando ponte relay: " + clientIp + " -> " + descricaoAlvo);
+
+            InputStream entradaCliente = socket.getInputStream();
+            OutputStream saidaCliente = socket.getOutputStream();
+            InputStream entradaAlvo = socketAlvo.getInputStream();
+            OutputStream saidaAlvo = socketAlvo.getOutputStream();
+
+            // Envia confirmacao de que a ponte foi iniciada para desbloquear o cliente.
+            saidaCliente.write("OK\n".getBytes());
+            saidaCliente.flush();
+
+            // Recebe a autenticacao do cliente e a encaminha ao dispositivo alvo.
+            String linhaAutenticacao = lerLinha(entradaCliente);
+
+            if (linhaAutenticacao == null || !linhaAutenticacao.startsWith("AUTH:")) {
+                System.out.println("Ponte rejeitada: autenticacao invalida");
+                saidaCliente.write("REJECTED:Autenticacao invalida\n".getBytes());
+                saidaCliente.flush();
+                return;
+            }
+
+            saidaAlvo.write((linhaAutenticacao + "\n").getBytes());
+            saidaAlvo.flush();
+
+            // Repassa ao cliente a resposta de aceitacao ou rejeicao recebida do alvo.
+            String resposta = lerLinha(entradaAlvo);
+
+            if (resposta == null) {
+                resposta = "REJECTED:Host encerrou a autenticacao";
+            }
+            saidaCliente.write((resposta + "\n").getBytes());
+            saidaCliente.flush();
+
+            if (!resposta.startsWith("ACCEPTED")) {
+                System.out.println("Ponte recusada pelo dispositivo alvo");
+                return;
+            }
+            System.out.println("Ponte aceita; iniciando retransmissao bidirecional...");
+
+            socket.setSoTimeout(0);
+            socketAlvo.setSoTimeout(0);
+            closeOnExit = false;
+
+            CountDownLatch ponteEncerrada = new CountDownLatch(1);
+
+            Thread clienteParaAlvo = new Thread(() -> {
+                try {
+                    retransmitir(entradaCliente, saidaAlvo);
+                } catch (Exception e) {
+                    // O fechamento de qualquer sentido encerra toda a ponte.
+                } finally {
+                    ponteEncerrada.countDown();
+                }
+            }, "relay-cliente-para-alvo-" + descricaoAlvo);
+
+            Thread alvoParaCliente = new Thread(() -> {
+                try {
+                    retransmitir(entradaAlvo, saidaCliente);
+                } catch (Exception e) {
+                    // O fechamento de qualquer sentido encerra toda a ponte.
+                } finally {
+                    ponteEncerrada.countDown();
+                }
+            }, "relay-alvo-para-cliente-" + descricaoAlvo);
+
+            clienteParaAlvo.start();
+            alvoParaCliente.start();
+
             ponteEncerrada.await();
         } finally {
-            try { socket.close(); } catch (Exception e) {}
-            try { socketAlvo.close(); } catch (Exception e) {}
-            clienteParaAlvo.join(1000);
-            alvoParaCliente.join(1000);
+            fecharSocket(socket);
+            fecharSocket(socketAlvo);
         }
 
-        System.out.println("Ponte encerrada: " + clientIp + " <-> " + idAlvo);
+        System.out.println("Ponte encerrada: " + clientIp + " <-> " + descricaoAlvo);
     }
 
     /** Copia bytes diretamente entre sockets em blocos maiores, sem flush redundante por bloco. */
@@ -219,6 +281,15 @@ public class ClientHandler implements Runnable {
         socketConfigurado.setTcpNoDelay(true);
         socketConfigurado.setSendBufferSize(64 * 1024);
         socketConfigurado.setReceiveBufferSize(64 * 1024);
+    }
+
+    /** Fecha um socket da ponte sem ocultar a causa original do encerramento. */
+    private void fecharSocket(Socket socketFechado) {
+        try {
+            socketFechado.close();
+        } catch (Exception e) {
+            // O outro sentido da ponte pode ter fechado o socket primeiro.
+        }
     }
 
     private String processarComando(String linha, OutputStream out) {

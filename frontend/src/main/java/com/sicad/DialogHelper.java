@@ -1,5 +1,6 @@
 package com.sicad;
 
+import javafx.animation.PauseTransition;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -13,70 +14,82 @@ import javafx.scene.paint.Color;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
+import javafx.util.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DialogHelper {
 
-    public static boolean showConnectionRequestDialog(String deviceId) {
-        AtomicBoolean accepted = new AtomicBoolean(false);
+    /** Exibe uma solicitacao de acesso e a recusa automaticamente apos o prazo padrao. */
+    public static boolean mostrarDialogoSolicitacaoConexao(String idDispositivo) {
+        return mostrarDialogoSolicitacaoConexao(idDispositivo, 60);
+    }
 
-        Stage dialog = new Stage();
-        dialog.initModality(Modality.APPLICATION_MODAL);
-        dialog.initStyle(StageStyle.TRANSPARENT);
+    /** Exibe uma solicitacao de acesso e fecha o dialogo quando o prazo informado expira. */
+    public static boolean mostrarDialogoSolicitacaoConexao(String idDispositivo, int segundosLimite) {
+        AtomicBoolean aceito = new AtomicBoolean(false);
 
-        VBox root = new VBox(20);
-        root.getStyleClass().add("card");
-        root.setStyle("-fx-background-color: #1E293B; -fx-border-color: #334155; -fx-border-width: 1px; -fx-border-radius: 10px; -fx-background-radius: 10px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.8), 20, 0, 0, 10);");
-        root.setPadding(new Insets(30));
-        root.setPrefWidth(400);
+        Stage dialogo = new Stage();
+        dialogo.initModality(Modality.APPLICATION_MODAL);
+        dialogo.initStyle(StageStyle.TRANSPARENT);
 
-        Label title = new Label("Solicitação de Acesso Remoto");
-        title.getStyleClass().add("title");
-        title.setStyle("-fx-font-size: 18px; -fx-text-fill: white;");
+        VBox raiz = new VBox(20);
+        raiz.getStyleClass().add("card");
+        raiz.setStyle("-fx-background-color: #1E293B; -fx-border-color: #334155; -fx-border-width: 1px; -fx-border-radius: 10px; -fx-background-radius: 10px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.8), 20, 0, 0, 10);");
+        raiz.setPadding(new Insets(30));
+        raiz.setPrefWidth(400);
 
-        Label content = new Label("O dispositivo " + deviceId + " deseja controlar sua máquina.\n\nVocê permite esta conexão?");
-        content.setWrapText(true);
-        content.setStyle("-fx-font-size: 14px; -fx-text-fill: #94A3B8;");
+        Label titulo = new Label("Solicitação de Acesso Remoto");
+        titulo.getStyleClass().add("title");
+        titulo.setStyle("-fx-font-size: 18px; -fx-text-fill: white;");
 
-        HBox buttonBox = new HBox(15);
-        buttonBox.setAlignment(Pos.CENTER_RIGHT);
+        Label conteudo = new Label("O dispositivo " + idDispositivo + " deseja controlar sua máquina.\n\nVocê permite esta conexão?");
+        conteudo.setWrapText(true);
+        conteudo.setStyle("-fx-font-size: 14px; -fx-text-fill: #94A3B8;");
 
-        Button btnReject = new Button("Recusar");
-        btnReject.getStyleClass().add("btn-secondary");
-        btnReject.setStyle("-fx-base: #EF4444; -fx-background-color: #EF4444; -fx-text-fill: white;");
-        btnReject.setOnAction(e -> {
-            accepted.set(false);
-            dialog.close();
+        HBox caixaBotoes = new HBox(15);
+        caixaBotoes.setAlignment(Pos.CENTER_RIGHT);
+
+        Button botaoRecusar = new Button("Recusar");
+        botaoRecusar.getStyleClass().add("btn-secondary");
+        botaoRecusar.setStyle("-fx-base: #EF4444; -fx-background-color: #EF4444; -fx-text-fill: white;");
+        botaoRecusar.setOnAction(e -> {
+            aceito.set(false);
+            dialogo.close();
         });
 
-        Button btnAccept = new Button("Permitir");
-        btnAccept.getStyleClass().add("btn-primary");
-        btnAccept.setOnAction(e -> {
-            accepted.set(true);
-            dialog.close();
+        Button botaoPermitir = new Button("Permitir");
+        botaoPermitir.getStyleClass().add("btn-primary");
+        botaoPermitir.setOnAction(e -> {
+            aceito.set(true);
+            dialogo.close();
         });
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Region espacador = new Region();
+        HBox.setHgrow(espacador, Priority.ALWAYS);
 
-        buttonBox.getChildren().addAll(spacer, btnReject, btnAccept);
+        caixaBotoes.getChildren().addAll(espacador, botaoRecusar, botaoPermitir);
 
-        root.getChildren().addAll(title, content, buttonBox);
+        raiz.getChildren().addAll(titulo, conteudo, caixaBotoes);
 
-        Scene scene = new Scene(root);
-        scene.setFill(Color.TRANSPARENT);
+        Scene cena = new Scene(raiz);
+        cena.setFill(Color.TRANSPARENT);
         
         // Carrega o CSS principal
-        java.net.URL cssUrl = Main.class.getResource("/com/sicad/styles.css");
-        if (cssUrl != null) {
-            scene.getStylesheets().add(cssUrl.toExternalForm());
+        java.net.URL urlCss = Main.class.getResource("/com/sicad/styles.css");
+        if (urlCss != null) {
+            cena.getStylesheets().add(urlCss.toExternalForm());
         }
 
-        dialog.setScene(scene);
-        dialog.centerOnScreen();
-        dialog.showAndWait();
+        PauseTransition limite = new PauseTransition(Duration.seconds(segundosLimite));
+        limite.setOnFinished(e -> dialogo.close());
 
-        return accepted.get();
+        dialogo.setScene(cena);
+        dialogo.centerOnScreen();
+        limite.play();
+        dialogo.showAndWait();
+        limite.stop();
+
+        return aceito.get();
     }
 
     public static void showErrorDialog(String titleStr, String message) {

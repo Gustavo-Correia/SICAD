@@ -148,7 +148,7 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Envia a resposta do medidor de latencia pelo mesmo fluxo binario dos quadros. */
+    /** Envia a resposta do medidor de latencia pelo canal binario de controle. */
     public static void enviarPong(DataOutputStream saida, long instanteOriginal) {
         if (saida == null) {
             return;
@@ -164,7 +164,7 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Envia o texto da area de transferencia no protocolo binario da sessao. */
+    /** Envia o texto da area de transferencia pelo canal binario de controle. */
     public static void enviarClipboard(DataOutputStream saida, String texto) {
         if (saida == null) {
             return;

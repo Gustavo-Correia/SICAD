@@ -2,6 +2,7 @@ package com.sicad.remote;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.Socket;
 import javafx.application.Platform;
@@ -24,6 +25,7 @@ import javafx.scene.input.*;
 import java.io.File;
 import java.net.InetSocketAddress;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -32,8 +34,9 @@ public class RemoteDesktopClient {
     private final int targetPort;
     private final String localId;
     private final String targetId;
-    private Socket socket;
-    private PrintWriter out;
+    private volatile Socket socket;
+    private volatile Socket socketVideo;
+    private volatile PrintWriter out;
     private volatile boolean running = true;
     private Circle pingDot;
     private Label pingLbl;
@@ -42,6 +45,7 @@ public class RemoteDesktopClient {
     private byte[] quadroCodificadoPendente;
     private final AtomicReference<Image> imagemPendente = new AtomicReference<>();
     private final AtomicBoolean atualizacaoImagemAgendada = new AtomicBoolean();
+    private final AtomicBoolean encerramentoNotificado = new AtomicBoolean();
 
     public RemoteDesktopClient(String targetId, String localId) {
         this.targetId = targetId;
@@ -57,48 +61,47 @@ public class RemoteDesktopClient {
         this.localId = null;
     }
 
-    /** Conecta ao relay usando buffers limitados para reduzir o acúmulo de dados antigos. */
+    /** Abre canais relay separados para impedir que os quadros bloqueiem comandos e respostas de ping. */
     public void conectarRelay(String hostServidor, int portaServidor) {
         new Thread(() -> {
             try {
-                socket = new Socket();
-                configurarSocketBaixaLatencia(socket);
-                socket.connect(new InetSocketAddress(hostServidor, portaServidor));
+                String identificadorSessao = UUID.randomUUID().toString().replace("-", "");
+
+                socket = abrirCanalRelay(hostServidor, portaServidor, "CONTROLE", 1);
+                socket.setSoTimeout(70_000);
                 out = new PrintWriter(socket.getOutputStream(), true);
-                java.io.InputStream inStream = socket.getInputStream();
+                java.io.InputStream entradaControle = socket.getInputStream();
 
-                // Request relay connection to target
-                out.println("RELAY_CONNECT:" + targetId);
+                out.println("AUTH:" + localId + ":" + identificadorSessao);
 
-                String response = lerLinha(inStream);
-                if (response != null && response.startsWith("ERRO:")) {
-                    String reason = response.substring(5);
-                    Platform.runLater(() -> mostrarErro("Conexão Recusada", "Alvo não disponível: " + reason));
-                    socket.close();
-                    return;
+                String respostaControle = lerLinha(entradaControle);
+                if (respostaControle == null || !respostaControle.startsWith("ACCEPTED")) {
+                    throw new IOException(obterMotivoRecusa(respostaControle));
                 }
+                socket.setSoTimeout(0);
 
-                // Now bridged — send AUTH
-                out.println("AUTH:" + localId);
+                socketVideo = abrirCanalRelay(hostServidor, portaServidor, "VIDEO", 10);
+                socketVideo.setSoTimeout(15_000);
+                PrintWriter saidaVideo = new PrintWriter(socketVideo.getOutputStream(), true);
+                java.io.InputStream entradaVideo = socketVideo.getInputStream();
+                saidaVideo.println("AUTH:" + localId + ":" + identificadorSessao);
 
-                response = lerLinha(inStream);
-                if (response == null || !response.startsWith("ACCEPTED")) {
-                    String reason = response != null && response.contains(":") ? response.split(":")[1] : "Desconhecida";
-                    Platform.runLater(() -> mostrarErro("Conexão Recusada", "O dispositivo alvo recusou a conexão. Motivo: " + reason));
-                    socket.close();
-                    return;
+                String respostaVideo = lerLinha(entradaVideo);
+                if (respostaVideo == null || !respostaVideo.startsWith("ACCEPTED")) {
+                    throw new IOException(obterMotivoRecusa(respostaVideo));
                 }
+                socketVideo.setSoTimeout(0);
 
-                // Aceito, inicia a UI e começa a receber vídeo
+                clipboardSync = new ClipboardSync(out, null, false);
                 Platform.runLater(this::createRemoteWindow);
-
-                DataInputStream dataIn = new DataInputStream(inStream);
-                iniciarFluxoVideo(dataIn);
+                iniciarFluxoControle(new DataInputStream(entradaControle));
+                iniciarFluxoVideo(new DataInputStream(entradaVideo));
 
             } catch (Exception e) {
+                desconectar();
                 Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar via relay: " + e.getMessage()));
             }
-        }, "remote-client-relay").start();
+        }, "cliente-remoto-relay").start();
     }
 
     /** Conecta diretamente ao host usando a mesma configuracao de baixa latencia do relay. */
@@ -107,7 +110,8 @@ public class RemoteDesktopClient {
             try {
                 socket = new Socket();
                 configurarSocketBaixaLatencia(socket);
-                socket.connect(new InetSocketAddress(targetHost, targetPort));
+                socket.connect(new InetSocketAddress(targetHost, targetPort), 5000);
+                socket.setSoTimeout(70_000);
                 out = new PrintWriter(socket.getOutputStream(), true);
                 java.io.InputStream inStream = socket.getInputStream();
 
@@ -122,12 +126,14 @@ public class RemoteDesktopClient {
                     socket.close();
                     return;
                 }
+                socket.setSoTimeout(0);
 
                 // Aceito, inicia a UI e começa a receber vídeo
+                clipboardSync = new ClipboardSync(out, null, false);
                 Platform.runLater(this::createRemoteWindow);
                 
-                DataInputStream dataIn = new DataInputStream(inStream);
-                iniciarFluxoVideo(dataIn);
+                DataInputStream entradaDados = new DataInputStream(inStream);
+                iniciarFluxoUnificado(entradaDados);
 
             } catch (Exception e) {
                 Platform.runLater(() -> mostrarErro("Erro de Conexão", "Não foi possível conectar a: " + targetHost + ":" + targetPort + "\n" + e.getMessage()));
@@ -135,16 +141,58 @@ public class RemoteDesktopClient {
         }, "remote-client-connect").start();
     }
 
-    private String lerLinha(java.io.InputStream in) throws Exception {
-        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-        int b;
-        while ((b = in.read()) != -1 && b != '\n') {
-            baos.write(b);
+    /** Le uma linha curta do handshake sem consumir o fluxo binario que vem em seguida. */
+    private String lerLinha(java.io.InputStream entrada) throws Exception {
+        java.io.ByteArrayOutputStream conteudo = new java.io.ByteArrayOutputStream();
+        int byteLido;
+        while ((byteLido = entrada.read()) != -1 && byteLido != '\n') {
+            if (conteudo.size() >= 4096) {
+                throw new IOException("Linha de handshake muito extensa");
+            }
+            conteudo.write(byteLido);
         }
-        if (b == -1 && baos.size() == 0) {
+        if (byteLido == -1 && conteudo.size() == 0) {
             return null;
         }
-        return baos.toString("UTF-8");
+        return conteudo.toString("UTF-8").trim();
+    }
+
+    /** Abre um socket para um canal relay e repete apenas enquanto o host conclui os dois registros. */
+    private Socket abrirCanalRelay(String hostServidor, int portaServidor, String canal, int tentativas) throws Exception {
+        String ultimaFalha = "Canal indisponivel";
+        for (int tentativa = 1; tentativa <= tentativas; tentativa++) {
+            Socket socketCanal = new Socket();
+            try {
+                configurarSocketBaixaLatencia(socketCanal);
+                socketCanal.connect(new InetSocketAddress(hostServidor, portaServidor), 5000);
+                socketCanal.setSoTimeout(5000);
+                PrintWriter saidaCanal = new PrintWriter(socketCanal.getOutputStream(), true);
+                saidaCanal.println("CONECTAR_CANAL_RELAY:" + targetId + ":" + canal);
+                String resposta = lerLinha(socketCanal.getInputStream());
+                if ("OK".equals(resposta)) {
+                    socketCanal.setSoTimeout(0);
+                    return socketCanal;
+                }
+                ultimaFalha = obterMotivoRecusa(resposta);
+            } catch (Exception e) {
+                ultimaFalha = e.getMessage();
+            }
+
+            fecharSocket(socketCanal);
+            if (tentativa < tentativas) {
+                Thread.sleep(300);
+            }
+        }
+        throw new IOException(ultimaFalha);
+    }
+
+    /** Extrai uma mensagem legivel da resposta textual de rejeicao do relay ou do host. */
+    private String obterMotivoRecusa(String resposta) {
+        if (resposta == null || resposta.isBlank()) {
+            return "Conexao encerrada durante a autenticacao";
+        }
+        int separador = resposta.indexOf(':');
+        return separador >= 0 ? resposta.substring(separador + 1) : resposta;
     }
 
     private ImageView imageView;
@@ -328,7 +376,9 @@ public class RemoteDesktopClient {
         });
 
         // Configura ClipboardSync no Viewer
-        clipboardSync = new ClipboardSync(out, null, false);
+        if (clipboardSync == null) {
+            clipboardSync = new ClipboardSync(out, null, false);
+        }
 
         // Inicia Ping Heartbeat
         startPingHeartbeat();
@@ -341,7 +391,7 @@ public class RemoteDesktopClient {
         stage.show();
     }
  
-    /** Le o protocolo binario e substitui qualquer quadro codificado que ainda nao foi decodificado. */
+    /** Le somente JPEGs do canal de video e conserva o ultimo quadro recebido. */
     private void iniciarFluxoVideo(DataInputStream entradaDados) {
         Thread tarefaDecodificacao = new Thread(this::decodificarQuadros, "decodificacao-quadros");
         tarefaDecodificacao.start();
@@ -350,37 +400,13 @@ public class RemoteDesktopClient {
             try {
                 while (running) {
                     int tamanho = entradaDados.readInt();
-                    if (tamanho > 0) {
-                        byte[] dadosImagem = new byte[tamanho];
-                        entradaDados.readFully(dadosImagem);
-
-                        synchronized (monitorQuadroCodificado) {
-                            quadroCodificadoPendente = dadosImagem;
-                            monitorQuadroCodificado.notify();
-                        }
-                    } else if (tamanho == -1) {
-                        // Resposta do Ping RTT
-                        long instanteOriginal = entradaDados.readLong();
-                        long latencia = System.currentTimeMillis() - instanteOriginal;
-                        atualizarPing(latencia);
-                    } else if (tamanho == -2) {
-                        // Sincronização do Clipboard vindo do Host
-                        int tamanhoTexto = entradaDados.readInt();
-                        byte[] dadosTexto = new byte[tamanhoTexto];
-                        entradaDados.readFully(dadosTexto);
-                        String texto = new String(dadosTexto, "UTF-8");
-                        if (clipboardSync != null) {
-                            clipboardSync.aplicarTextoRemoto(texto);
-                        }
+                    if (tamanho <= 0 || tamanho > 32 * 1024 * 1024) {
+                        throw new IOException("Tamanho de quadro invalido: " + tamanho);
                     }
+                    receberQuadro(entradaDados, tamanho);
                 }
             } catch (Exception e) {
-                if (running) {
-                    System.out.println("Conexão de vídeo encerrada: " + e.getMessage());
-                    Platform.runLater(() -> {
-                        mostrarErro("Conexão Perdida", "A sessão remota foi encerrada.");
-                    });
-                }
+                notificarConexaoEncerrada("video", e);
                 desconectar();
             } finally {
                 synchronized (monitorQuadroCodificado) {
@@ -388,6 +414,82 @@ public class RemoteDesktopClient {
                 }
             }
         }, "remote-client-video").start();
+    }
+
+    /** Le ping e area de transferencia sem disputar a fila TCP usada pelos quadros. */
+    private void iniciarFluxoControle(DataInputStream entradaDados) {
+        new Thread(() -> {
+            try {
+                while (running) {
+                    processarMensagemControle(entradaDados.readInt(), entradaDados);
+                }
+            } catch (Exception e) {
+                notificarConexaoEncerrada("controle", e);
+                desconectar();
+            }
+        }, "cliente-remoto-controle").start();
+    }
+
+    /** Preserva o protocolo de socket unico usado pela conexao direta legada. */
+    private void iniciarFluxoUnificado(DataInputStream entradaDados) {
+        Thread tarefaDecodificacao = new Thread(this::decodificarQuadros, "decodificacao-quadros-direta");
+        tarefaDecodificacao.start();
+        new Thread(() -> {
+            try {
+                while (running) {
+                    int tamanho = entradaDados.readInt();
+                    if (tamanho > 0 && tamanho <= 32 * 1024 * 1024) {
+                        receberQuadro(entradaDados, tamanho);
+                    } else {
+                        processarMensagemControle(tamanho, entradaDados);
+                    }
+                }
+            } catch (Exception e) {
+                notificarConexaoEncerrada("unificado", e);
+                desconectar();
+            }
+        }, "cliente-remoto-unificado").start();
+    }
+
+    /** Copia um JPEG completo para a vaga unica aguardada pela tarefa de decodificacao. */
+    private void receberQuadro(DataInputStream entradaDados, int tamanho) throws Exception {
+        byte[] dadosImagem = new byte[tamanho];
+        entradaDados.readFully(dadosImagem);
+        synchronized (monitorQuadroCodificado) {
+            quadroCodificadoPendente = dadosImagem;
+            monitorQuadroCodificado.notify();
+        }
+    }
+
+    /** Processa as mensagens binarias pequenas que chegam exclusivamente pelo controle. */
+    private void processarMensagemControle(int tipoMensagem, DataInputStream entradaDados) throws Exception {
+        if (tipoMensagem == -1) {
+            long instanteOriginal = entradaDados.readLong();
+            atualizarPing(System.currentTimeMillis() - instanteOriginal);
+            return;
+        }
+        if (tipoMensagem == -2) {
+            int tamanhoTexto = entradaDados.readInt();
+            if (tamanhoTexto < 0 || tamanhoTexto > 4 * 1024 * 1024) {
+                throw new IOException("Tamanho de texto invalido: " + tamanhoTexto);
+            }
+            byte[] dadosTexto = new byte[tamanhoTexto];
+            entradaDados.readFully(dadosTexto);
+            String texto = new String(dadosTexto, java.nio.charset.StandardCharsets.UTF_8);
+            if (clipboardSync != null) {
+                clipboardSync.aplicarTextoRemoto(texto);
+            }
+            return;
+        }
+        throw new IOException("Tipo de mensagem de controle invalido: " + tipoMensagem);
+    }
+
+    /** Mostra uma unica mensagem quando qualquer um dos canais da sessao e perdido. */
+    private void notificarConexaoEncerrada(String canal, Exception erro) {
+        if (running && encerramentoNotificado.compareAndSet(false, true)) {
+            System.out.println("Canal remoto de " + canal + " encerrado: " + erro.getMessage());
+            Platform.runLater(() -> mostrarErro("Conexão Perdida", "A sessão remota foi encerrada."));
+        }
     }
 
     /** Decodifica somente o JPEG mais recente e descarta quadros substituidos durante o processamento. */
@@ -521,12 +623,19 @@ public class RemoteDesktopClient {
         if (clipboardSync != null) {
             clipboardSync.stop();
         }
+        fecharSocket(socket);
+        fecharSocket(socketVideo);
+    }
+
+    /** Fecha silenciosamente um dos sockets da sessao remota. */
+    private void fecharSocket(Socket socketFechado) {
+        if (socketFechado == null) {
+            return;
+        }
         try {
-            if (socket != null && !socket.isClosed()) {
-                socket.close();
-            }
+            socketFechado.close();
         } catch (Exception e) {
-            e.printStackTrace();
+            // O outro canal pode ter encerrado a sessao primeiro.
         }
     }
 

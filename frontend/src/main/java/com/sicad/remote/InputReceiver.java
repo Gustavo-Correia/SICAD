@@ -28,13 +28,15 @@ public class InputReceiver implements Runnable {
         this.clipboardSync = null;
     }
 
-    public void stopReceiving() {
+    /** Interrompe o recebimento de comandos e o monitoramento da area de transferencia. */
+    public void pararRecebimento() {
         this.running = false;
         if (clipboardSync != null) {
             clipboardSync.stop();
         }
     }
 
+    /** Processa comandos do canal de controle ate a conexao ser encerrada. */
     @Override
     public void run() {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
@@ -44,6 +46,8 @@ public class InputReceiver implements Runnable {
             }
         } catch (Exception e) {
             System.out.println("InputReceiver encerrado: " + e.getMessage());
+        } finally {
+            pararRecebimento();
         }
     }
 

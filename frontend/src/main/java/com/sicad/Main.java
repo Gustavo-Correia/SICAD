@@ -3,6 +3,8 @@ package com.sicad;
 import java.io.*;
 import java.net.Socket;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.List;
 import java.util.Map;
 
@@ -58,7 +60,12 @@ public class Main extends Application {
     private Label idLabel;
     private String meuID;
     
-    private volatile Socket relaySocket;
+    private final Object monitorSessaoRelay = new Object();
+    private volatile Socket socketRelayControle;
+    private volatile Socket socketRelayVideo;
+    private volatile String identificadorSessaoAceita;
+    private volatile ScreenCaster transmissorTelaAtivo;
+    private final AtomicBoolean registroRelayIniciado = new AtomicBoolean();
     private TextField idInput;
     private FlowPane recentsGrid;
     private ScrollPane centerScrollPane;
@@ -140,14 +147,15 @@ public class Main extends Application {
         inicializarID();
     }
 
+    /** Encerra conexoes administrativas e os dois canais da sessao remota. */
     @Override
     public void stop() throws Exception {
         if (conexaoServidor != null) {
             conexaoServidor.desconectarServidor();
         }
-        if (relaySocket != null) {
-            try { relaySocket.close(); } catch (Exception e) {}
-        }
+        encerrarSessaoRelay(null);
+        fecharSocketRelay(socketRelayControle);
+        fecharSocketRelay(socketRelayVideo);
         super.stop();
         System.out.println("Finalizando todos os processos...");
         System.exit(0);
@@ -223,90 +231,208 @@ public class Main extends Application {
 
 
 
-    /** Mantem o host registrado no relay e inicia uma sessao remota com buffers de baixa latencia. */
+    /** Inicia registros independentes para os canais de controle e video na mesma porta relay. */
     private void iniciarRelayHost(String id) {
-        new Thread(() -> {
-            while (!Thread.interrupted()) {
-                try {
-                    // Relay SEMPRE via remoto (bore) para que viewers remotos consigam fazer bridge
-                    Socket sock = new Socket();
-                    sock.setTcpNoDelay(true);
-                    sock.setSendBufferSize(64 * 1024);
-                    sock.setReceiveBufferSize(64 * 1024);
-                    sock.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
-                    relaySocket = sock;
-                    PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
-                    out.println("REGISTER_RELAY:" + id);
-                    System.out.println("Relay host registrado: " + id);
+        if (!registroRelayIniciado.compareAndSet(false, true)) {
+            return;
+        }
+        new Thread(() -> manterCanalControle(id), "relay-host-controle").start();
+        new Thread(() -> manterCanalVideo(id), "relay-host-video").start();
+    }
 
-                    InputStream in = sock.getInputStream();
-                    Robot robot = new Robot();
+    /** Mantem o canal de comandos registrado e solicita autorizacao antes de aceitar a sessao. */
+    private void manterCanalControle(String id) {
+        while (!Thread.currentThread().isInterrupted()) {
+            Socket canalControle = null;
+            String identificadorSessao = null;
+            try {
+                canalControle = registrarCanalRelay(id, "CONTROLE");
+                socketRelayControle = canalControle;
 
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    int b;
-                    while ((b = in.read()) != -1 && b != '\n') {
-                        baos.write(b);
-                    }
-                    if (baos.size() == 0) {
-                        sock.close();
+                String autenticacao = lerLinhaRelay(canalControle.getInputStream());
+                String[] partes = autenticacao != null ? autenticacao.split(":", 3) : new String[0];
+                if (partes.length != 3 || !"AUTH".equals(partes[0])) {
+                    enviarRespostaRelay(canalControle, "REJECTED:Autenticacao invalida");
+                    continue;
+                }
+
+                String idRemoto = partes[1];
+                identificadorSessao = partes[2];
+                if (!solicitarAutorizacaoRemota(idRemoto)) {
+                    enviarRespostaRelay(canalControle, "REJECTED:Acesso negado pelo usuario");
+                    continue;
+                }
+
+                synchronized (monitorSessaoRelay) {
+                    identificadorSessaoAceita = identificadorSessao;
+                }
+                enviarRespostaRelay(canalControle, "ACCEPTED");
+
+                DataOutputStream saidaControle = new DataOutputStream(canalControle.getOutputStream());
+                InputReceiver receptor = new InputReceiver(canalControle, saidaControle, new Robot());
+                receptor.run();
+                receptor.pararRecebimento();
+            } catch (Exception e) {
+                System.out.println("Canal de controle relay encerrado: " + e.getMessage());
+            } finally {
+                if (identificadorSessao != null) {
+                    encerrarSessaoRelay(identificadorSessao);
+                }
+                limparCanalRelay("CONTROLE", canalControle);
+                aguardarNovaTentativaRelay();
+            }
+        }
+    }
+
+    /** Mantem o canal de video isolado e transmite apenas para uma sessao previamente autorizada. */
+    private void manterCanalVideo(String id) {
+        while (!Thread.currentThread().isInterrupted()) {
+            Socket canalVideo = null;
+            String identificadorSessao = null;
+            try {
+                canalVideo = registrarCanalRelay(id, "VIDEO");
+                socketRelayVideo = canalVideo;
+
+                String autenticacao = lerLinhaRelay(canalVideo.getInputStream());
+                String[] partes = autenticacao != null ? autenticacao.split(":", 3) : new String[0];
+                if (partes.length != 3 || !"AUTH".equals(partes[0])) {
+                    enviarRespostaRelay(canalVideo, "REJECTED:Autenticacao invalida");
+                    continue;
+                }
+
+                identificadorSessao = partes[2];
+                synchronized (monitorSessaoRelay) {
+                    if (!identificadorSessao.equals(identificadorSessaoAceita)) {
+                        enviarRespostaRelay(canalVideo, "REJECTED:Sessao nao autorizada");
                         continue;
-                    }
-
-                    String line = baos.toString("UTF-8").trim();
-                    if (!line.startsWith("AUTH:")) {
-                        sock.close();
-                        continue;
-                    }
-
-                    String remoteId = line.substring(5);
-                    System.out.println("Relay AUTH recebido de: " + remoteId);
-
-                    CountDownLatch latch = new CountDownLatch(1);
-                    final boolean[] accepted = {false};
-                    Platform.runLater(() -> {
-                        accepted[0] = com.sicad.DialogHelper.showConnectionRequestDialog(remoteId);
-                        latch.countDown();
-                    });
-                    latch.await();
-
-                    OutputStream os = sock.getOutputStream();
-                    if (accepted[0]) {
-                        os.write("ACCEPTED\n".getBytes());
-                        os.flush();
-
-                        DataOutputStream dataOut = new DataOutputStream(os);
-                        ScreenCaster caster = new ScreenCaster(dataOut, robot);
-                        InputReceiver receiver = new InputReceiver(sock, dataOut, robot);
-
-                        Thread casterThread = new Thread(caster, "relay-caster");
-                        Thread receiverThread = new Thread(receiver, "relay-receiver");
-                        casterThread.start();
-                        receiverThread.start();
-
-                        try {
-                            receiverThread.join();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                        caster.pararTransmissao();
-                        System.out.println("Sessão remota encerrada via relay.");
-                    } else {
-                        os.write("REJECTED:Acesso negado pelo usuario\n".getBytes());
-                        os.flush();
-                    }
-
-                    sock.close();
-                } catch (Exception e) {
-                    System.out.println("Relay host: " + e.getMessage());
-                    try { Thread.sleep(3000); } catch (InterruptedException ie) { break; }
-                } finally {
-                    if (relaySocket != null) {
-                        try { relaySocket.close(); } catch (Exception e) {}
-                        relaySocket = null;
                     }
                 }
+
+                enviarRespostaRelay(canalVideo, "ACCEPTED");
+                ScreenCaster transmissor = new ScreenCaster(
+                        new DataOutputStream(canalVideo.getOutputStream()), new Robot());
+                transmissorTelaAtivo = transmissor;
+                transmissor.run();
+            } catch (Exception e) {
+                System.out.println("Canal de video relay encerrado: " + e.getMessage());
+            } finally {
+                if (identificadorSessao != null) {
+                    encerrarSessaoRelay(identificadorSessao);
+                }
+                limparCanalRelay("VIDEO", canalVideo);
+                aguardarNovaTentativaRelay();
             }
-        }, "relay-host").start();
+        }
+    }
+
+    /** Abre e registra no backend um socket de baixa latencia para o canal informado. */
+    private Socket registrarCanalRelay(String id, String canal) throws Exception {
+        Socket socketCanal = new Socket();
+        try {
+            socketCanal.setTcpNoDelay(true);
+            socketCanal.setKeepAlive(true);
+            socketCanal.setSendBufferSize(64 * 1024);
+            socketCanal.setReceiveBufferSize(64 * 1024);
+            socketCanal.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
+            PrintWriter saidaRegistro = new PrintWriter(socketCanal.getOutputStream(), true);
+            saidaRegistro.println("REGISTRAR_CANAL_RELAY:" + id + ":" + canal);
+            System.out.println("Canal relay registrado: " + id + " [" + canal + "]");
+            return socketCanal;
+        } catch (Exception e) {
+            fecharSocketRelay(socketCanal);
+            throw e;
+        }
+    }
+
+    /** Exibe ao usuario a solicitacao remota e aguarda a decisao da interface grafica. */
+    private boolean solicitarAutorizacaoRemota(String idRemoto) throws InterruptedException {
+        CountDownLatch confirmacao = new CountDownLatch(1);
+        boolean[] autorizado = {false};
+        Platform.runLater(() -> {
+            try {
+                autorizado[0] = com.sicad.DialogHelper.mostrarDialogoSolicitacaoConexao(idRemoto, 60);
+            } finally {
+                confirmacao.countDown();
+            }
+        });
+        return confirmacao.await(65, TimeUnit.SECONDS) && autorizado[0];
+    }
+
+    /** Le uma linha curta do handshake sem consumir bytes binarios posteriores. */
+    private String lerLinhaRelay(InputStream entrada) throws Exception {
+        ByteArrayOutputStream conteudo = new ByteArrayOutputStream();
+        int byteLido;
+        while ((byteLido = entrada.read()) != -1 && byteLido != '\n') {
+            if (conteudo.size() >= 4096) {
+                throw new IOException("Linha de handshake relay muito extensa");
+            }
+            conteudo.write(byteLido);
+        }
+        return conteudo.size() > 0 ? conteudo.toString("UTF-8").trim() : null;
+    }
+
+    /** Envia uma resposta textual do host antes de iniciar o fluxo binario do canal. */
+    private void enviarRespostaRelay(Socket socketCanal, String resposta) throws Exception {
+        OutputStream saida = socketCanal.getOutputStream();
+        saida.write((resposta + "\n").getBytes());
+        saida.flush();
+    }
+
+    /** Encerra os dois sockets e o transmissor quando um canal da sessao ativa termina. */
+    private void encerrarSessaoRelay(String identificadorEsperado) {
+        Socket controle;
+        Socket video;
+        ScreenCaster transmissor;
+        synchronized (monitorSessaoRelay) {
+            if (identificadorEsperado != null && !identificadorEsperado.equals(identificadorSessaoAceita)) {
+                return;
+            }
+            identificadorSessaoAceita = null;
+            controle = socketRelayControle;
+            video = socketRelayVideo;
+            transmissor = transmissorTelaAtivo;
+            socketRelayControle = null;
+            socketRelayVideo = null;
+            transmissorTelaAtivo = null;
+        }
+        if (transmissor != null) {
+            transmissor.pararTransmissao();
+        }
+        fecharSocketRelay(controle);
+        fecharSocketRelay(video);
+    }
+
+    /** Remove somente a referencia pertencente ao ciclo atual de um canal relay. */
+    private void limparCanalRelay(String canal, Socket socketCanal) {
+        synchronized (monitorSessaoRelay) {
+            if ("CONTROLE".equals(canal) && socketRelayControle == socketCanal) {
+                socketRelayControle = null;
+            } else if ("VIDEO".equals(canal) && socketRelayVideo == socketCanal) {
+                socketRelayVideo = null;
+            }
+        }
+        fecharSocketRelay(socketCanal);
+    }
+
+    /** Fecha silenciosamente um socket de registro ou de sessao relay. */
+    private void fecharSocketRelay(Socket socketCanal) {
+        if (socketCanal == null) {
+            return;
+        }
+        try {
+            socketCanal.close();
+        } catch (Exception e) {
+            // O canal pode ter sido fechado pelo backend ou pelo outro lado da sessao.
+        }
+    }
+
+    /** Evita reconexoes agressivas quando um canal relay e encerrado. */
+    private void aguardarNovaTentativaRelay() {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private VBox createSidebar() {

@@ -40,6 +40,7 @@ public class RemoteDesktopServer {
         }
     }
 
+    /** Autentica uma conexao direta e solicita permissao antes de iniciar a sessao. */
     private void handleConnection(Socket clientSocket) {
         new Thread(() -> {
             try {
@@ -58,7 +59,7 @@ public class RemoteDesktopServer {
 
                 // Solicitar permissão na UI thread
                 Platform.runLater(() -> {
-                    boolean accepted = com.sicad.DialogHelper.showConnectionRequestDialog(clientId);
+                    boolean accepted = com.sicad.DialogHelper.mostrarDialogoSolicitacaoConexao(clientId);
                     new Thread(() -> {
                         try {
                             if (accepted) {
