@@ -212,15 +212,15 @@ public class RemoteDesktopClient {
         double offsetX = (viewWidth - actualImageWidth) / 2.0;
         double offsetY = (viewHeight - actualImageHeight) / 2.0;
         
-        // Mapeia para o pixel da imagem remota
-        double mappedX = (mouseX - offsetX) / finalScale;
-        double mappedY = (mouseY - offsetY) / finalScale;
+        // Mapeia para uma proporção de 0.0 a 1.0 (onde 0.5 é o meio da tela)
+        double ratioX = (mouseX - offsetX) / actualImageWidth;
+        double ratioY = (mouseY - offsetY) / actualImageHeight;
         
-        // Limita dentro das bordas da imagem remota
-        mappedX = Math.max(0, Math.min(imageWidth - 1, mappedX));
-        mappedY = Math.max(0, Math.min(imageHeight - 1, mappedY));
+        // Limita dentro das bordas
+        ratioX = Math.max(0.0, Math.min(1.0, ratioX));
+        ratioY = Math.max(0.0, Math.min(1.0, ratioY));
         
-        return new javafx.geometry.Point2D(mappedX, mappedY);
+        return new javafx.geometry.Point2D(ratioX, ratioY);
     }
 
     private void createRemoteWindow() {
@@ -301,7 +301,7 @@ public class RemoteDesktopClient {
                 lastMouseMoveTime = now;
                 javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
                 if (mapped != null) {
-                    sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+                    sendCommand("MOUSE_MOVE_RATIO:" + mapped.getX() + ":" + mapped.getY());
                 }
             }
         });
@@ -312,7 +312,7 @@ public class RemoteDesktopClient {
                 lastMouseMoveTime = now;
                 javafx.geometry.Point2D mapped = mapCoordinates(e.getX(), e.getY());
                 if (mapped != null) {
-                    sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+                    sendCommand("MOUSE_MOVE_RATIO:" + mapped.getX() + ":" + mapped.getY());
                 }
             }
         });
@@ -354,6 +354,19 @@ public class RemoteDesktopClient {
         stage.setOnCloseRequest(e -> disconnect());
         stage.setScene(scene);
         stage.show();
+        
+        // Ajuste inicial do mouse
+        Platform.runLater(() -> {
+            try {
+                // Centraliza o mouse local na janela
+                double centerX = stage.getX() + stage.getWidth() / 2;
+                double centerY = stage.getY() + stage.getHeight() / 2;
+                new javafx.scene.robot.Robot().mouseMove(centerX, centerY);
+                
+                // Manda o receptor centralizar também
+                sendCommand("MOUSE_MOVE_RATIO:0.5:0.5");
+            } catch (Exception e) {}
+        });
     }
  
     private void startVideoLoop(DataInputStream dataIn) {

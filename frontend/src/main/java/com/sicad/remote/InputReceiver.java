@@ -75,6 +75,19 @@ public class InputReceiver implements Runnable {
                         }
                     }
                     break;
+                case "MOUSE_MOVE_RATIO":
+                    if (parts.length >= 2) {
+                        String[] coords = parts[1].split(":");
+                        if (coords.length >= 2) {
+                            double ratioX = Double.parseDouble(coords[0]);
+                            double ratioY = Double.parseDouble(coords[1]);
+                            java.awt.Dimension screenSize = java.awt.Toolkit.getDefaultToolkit().getScreenSize();
+                            int x = (int) (ratioX * screenSize.width);
+                            int y = (int) (ratioY * screenSize.height);
+                            robot.mouseMove(x, y);
+                        }
+                    }
+                    break;
                 case "MOUSE_PRESS":
                     if (parts.length >= 2) {
                         int button = Integer.parseInt(parts[1]);
