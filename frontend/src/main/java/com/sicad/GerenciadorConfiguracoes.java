@@ -12,7 +12,7 @@ public class GerenciadorConfiguracoes {
         Properties props = new Properties();
         // Valores Padrão
         props.setProperty("server.host", "bore.pub");
-        props.setProperty("server.port", "19664");
+        props.setProperty("server.port", "28145");
         props.setProperty("local.port", "5001");
         props.setProperty("caster.fps", "15");
         props.setProperty("caster.quality", "0.55");
