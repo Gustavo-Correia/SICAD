@@ -84,6 +84,25 @@ public class RemoteDesktopClient {
                 // Aceito, inicia a UI e começa a receber vídeo
                 Platform.runLater(this::createRemoteWindow);
 
+                // --------- NOVO CANAL DE INPUT -----------
+                socketInput = new Socket(serverHost, serverPort);
+                PrintWriter outInput = new PrintWriter(socketInput.getOutputStream(), true);
+                outInput.println("RELAY_CONNECT:" + targetId + "_INPUT");
+                
+                String inputResp = lerLinha(socketInput.getInputStream());
+                if (inputResp != null && !inputResp.startsWith("ERRO:")) {
+                    outInput.println("AUTH:" + localId);
+                    lerLinha(socketInput.getInputStream()); // Consume ACCEPTED
+                }
+
+                // Redireciona o envio de comandos (out) para o socket de input
+                out = outInput;
+
+                // Inicia loop de leitura de PONG e Clipboard do canal de input
+                DataInputStream dataInInput = new DataInputStream(socketInput.getInputStream());
+                startInputReadLoop(dataInInput);
+                // ------------------------------------------
+
                 DataInputStream dataIn = new DataInputStream(inStream);
                 startVideoLoop(dataIn);
 
@@ -114,25 +133,6 @@ public class RemoteDesktopClient {
 
                 // Aceito, inicia a UI e começa a receber vídeo
                 Platform.runLater(this::createRemoteWindow);
-
-                // --------- NOVO CANAL DE INPUT -----------
-                socketInput = new Socket(serverHost, serverPort);
-                PrintWriter outInput = new PrintWriter(socketInput.getOutputStream(), true);
-                outInput.println("RELAY_CONNECT:" + targetId + "_INPUT");
-                
-                String inputResp = lerLinha(socketInput.getInputStream());
-                if (inputResp != null && !inputResp.startsWith("ERRO:")) {
-                    outInput.println("AUTH:" + localId);
-                    lerLinha(socketInput.getInputStream()); // Consume ACCEPTED
-                }
-
-                // Redireciona o envio de comandos (out) para o socket de input
-                out = outInput;
-
-                // Inicia loop de leitura de PONG e Clipboard do canal de input
-                DataInputStream dataInInput = new DataInputStream(socketInput.getInputStream());
-                startInputReadLoop(dataInInput);
-                // ------------------------------------------
 
                 DataInputStream dataIn = new DataInputStream(inStream);
                 startVideoLoop(dataIn);
@@ -372,6 +372,18 @@ public class RemoteDesktopClient {
                                 adjustStageSize(img);
                             }
                         });
+                    } else if (length == -1) {
+                        long originalTimestamp = dataIn.readLong();
+                        long rtt = System.currentTimeMillis() - originalTimestamp;
+                        atualizarPing(rtt);
+                    } else if (length == -2) {
+                        int textLen = dataIn.readInt();
+                        byte[] textBytes = new byte[textLen];
+                        dataIn.readFully(textBytes);
+                        String text = new String(textBytes, "UTF-8");
+                        if (clipboardSync != null) {
+                            clipboardSync.aplicarTextoRemoto(text);
+                        }
                     }
                 }
             } catch (Exception e) {
