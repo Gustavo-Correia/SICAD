@@ -336,6 +336,15 @@ public class Main extends Application {
             socketCanal.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
             PrintWriter saidaRegistro = new PrintWriter(socketCanal.getOutputStream(), true);
             saidaRegistro.println("REGISTRAR_CANAL_RELAY:" + id + ":" + canal);
+            socketCanal.setSoTimeout(5000);
+            String resposta = lerLinhaRelay(socketCanal.getInputStream());
+            if (!"REGISTRO_OK".equals(resposta)) {
+                if (resposta != null && resposta.contains("Comando desconhecido")) {
+                    throw new IOException("Backend remoto desatualizado; reconstrua o container backend-1");
+                }
+                throw new IOException("Registro do canal recusado: " + resposta);
+            }
+            socketCanal.setSoTimeout(0);
             System.out.println("Canal relay registrado: " + id + " [" + canal + "]");
             return socketCanal;
         } catch (Exception e) {
@@ -429,7 +438,7 @@ public class Main extends Application {
     /** Evita reconexoes agressivas quando um canal relay e encerrado. */
     private void aguardarNovaTentativaRelay() {
         try {
-            Thread.sleep(1000);
+            Thread.sleep(3000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

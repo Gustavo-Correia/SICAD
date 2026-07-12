@@ -120,6 +120,9 @@ public class ClientHandler implements Runnable {
         String id = partes[0];
         String canal = partes[1];
         RelayManager.registrarCanal(id, canal, socket);
+        OutputStream saidaConfirmacao = socket.getOutputStream();
+        saidaConfirmacao.write("REGISTRO_OK\n".getBytes());
+        saidaConfirmacao.flush();
         try {
             while (!Thread.currentThread().isInterrupted() && !socket.isClosed()) {
                 Thread.sleep(1000);

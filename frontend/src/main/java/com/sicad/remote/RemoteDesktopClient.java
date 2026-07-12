@@ -191,6 +191,9 @@ public class RemoteDesktopClient {
         if (resposta == null || resposta.isBlank()) {
             return "Conexao encerrada durante a autenticacao";
         }
+        if (resposta.contains("Comando desconhecido")) {
+            return "Backend remoto desatualizado; reconstrua o container backend-1";
+        }
         int separador = resposta.indexOf(':');
         return separador >= 0 ? resposta.substring(separador + 1) : resposta;
     }
