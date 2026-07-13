@@ -173,7 +173,6 @@ public class Main extends Application {
             GerenciadorID gerenciador = new GerenciadorID(conexaoServidor);
             String id = gerenciador.obterOuCriarID();
 
-            carregarConfigServidor(id);
             carregarHistoricoServidor(id);
 
             Platform.runLater(() -> {
@@ -182,31 +181,6 @@ public class Main extends Application {
 
             iniciarRelayHost(id);
         }, "inicializar-id").start();
-    }
-
-    private void carregarConfigServidor(String id) {
-        try {
-            String resposta = conexaoServidor.enviarComando("LOAD_CONFIG:" + id);
-            if (resposta != null && resposta.startsWith("CONFIG:")) {
-                String[] valores = resposta.substring(7).split(",");
-                if (valores.length == 6) {
-                    SERVIDOR_HOST = valores[0];
-                    SERVIDOR_PORTA = Integer.parseInt(valores[1]);
-                    GerenciadorConfiguracoes.aplicarConfiguracoes(
-                            SERVIDOR_HOST,
-                            SERVIDOR_PORTA,
-                            Integer.parseInt(valores[2]),
-                            Double.parseDouble(valores[3]),
-                            Integer.parseInt(valores[4]),
-                            Double.parseDouble(valores[5]));
-                    System.out.println("Configuracoes carregadas do servidor para " + id);
-                }
-            } else if ("CONFIG_NOT_FOUND".equals(resposta)) {
-                System.out.println("Nenhuma configuracao salva; usando valores padrao.");
-            }
-        } catch (Exception e) {
-            System.out.println("Erro ao carregar config do servidor: " + e.getMessage());
-        }
     }
 
     private void carregarHistoricoServidor(String id) {
@@ -943,35 +917,13 @@ public class Main extends Application {
                     return;
                 }
 
-                if (conexaoServidor == null || !conexaoServidor.isConectado() || meuID == null) {
-                    saveMsg.setText("Erro: conecte ao servidor antes de salvar.");
-                    saveMsg.setStyle("-fx-text-fill: #EF4444;");
-                    return;
-                }
-
                 int porta = Integer.parseInt(portStr);
-                String configStr = host + "," + porta + "," + fps + "," + quality
-                        + "," + limiteKbps + "," + escala;
-                saveBtn.setDisable(true);
-                saveMsg.setText("Salvando no banco...");
-                new Thread(() -> {
-                    String resposta = conexaoServidor.enviarComando(
-                            "SAVE_CONFIG:" + meuID + ":" + configStr);
-                    Platform.runLater(() -> {
-                        saveBtn.setDisable(false);
-                        if ("CONFIG_OK".equals(resposta)) {
-                            SERVIDOR_HOST = host;
-                            SERVIDOR_PORTA = porta;
-                            GerenciadorConfiguracoes.aplicarConfiguracoes(
-                                    host, porta, fps, quality, limiteKbps, escala);
-                            saveMsg.setText("Configurações salvas no banco!");
-                            saveMsg.setStyle("-fx-text-fill: #10B981;");
-                        } else {
-                            saveMsg.setText("Erro ao salvar no banco: " + resposta);
-                            saveMsg.setStyle("-fx-text-fill: #EF4444;");
-                        }
-                    });
-                }, "salvar-config-servidor").start();
+                SERVIDOR_HOST = host;
+                SERVIDOR_PORTA = porta;
+                GerenciadorConfiguracoes.aplicarConfiguracoes(
+                        host, porta, fps, quality, limiteKbps, escala);
+                saveMsg.setText("Configurações salvas!");
+                saveMsg.setStyle("-fx-text-fill: #10B981;");
             } catch (Exception ex) {
                 saveMsg.setText("Erro ao salvar: " + ex.getMessage());
                 saveMsg.setStyle("-fx-text-fill: #EF4444;");

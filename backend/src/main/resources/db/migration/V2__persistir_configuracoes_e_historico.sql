@@ -1,7 +1,3 @@
-ALTER TABLE configuracoes
-    ADD COLUMN IF NOT EXISTS host VARCHAR(255) NOT NULL DEFAULT '127.0.0.1',
-    ADD COLUMN IF NOT EXISTS porta INTEGER NOT NULL DEFAULT 5000;
-
 CREATE TABLE IF NOT EXISTS historico_conexoes (
     usuario_identificador VARCHAR(100) NOT NULL,
     destino_identificador VARCHAR(100) NOT NULL,

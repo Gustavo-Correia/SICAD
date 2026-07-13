@@ -1,7 +1,0 @@
-CREATE TABLE IF NOT EXISTS configuracoes (
-    identificador VARCHAR(50) PRIMARY KEY,
-    fps INTEGER NOT NULL DEFAULT 15,
-    qualidade REAL NOT NULL DEFAULT 0.85,
-    limite_kbps INTEGER NOT NULL DEFAULT 5000,
-    escala REAL NOT NULL DEFAULT 0.85
-);
