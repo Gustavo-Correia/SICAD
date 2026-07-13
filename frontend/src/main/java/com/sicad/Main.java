@@ -542,7 +542,7 @@ public class Main extends Application {
             btnReconnect.setText("Conectando...");
             new Thread(() -> {
                 conexaoServidor.conectarComFallback(
-                        "192.168.85.110", PORTA_LOCAL,
+                        "10.50.178.133", PORTA_LOCAL,
                         SERVIDOR_REMOTO_HOST, PORTA_REMOTA
                 );
                 inicializarID();

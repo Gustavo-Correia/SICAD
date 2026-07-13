@@ -1,5 +1,6 @@
 package com.sicad.remote;
 
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.FileInputStream;
@@ -7,11 +8,15 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.Base64;
+import javax.imageio.ImageIO;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.image.PixelFormat;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.image.WritableImage;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 import javafx.scene.shape.Circle;
@@ -32,6 +37,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class ClienteDesktopRemoto {
+    private static final int TAMANHO_TILE = 64;
+
     private final String hostAlvo;
     private final int portaAlvo;
     private final String idLocal;
@@ -50,6 +57,8 @@ public class ClienteDesktopRemoto {
     private final AtomicBoolean encerramentoNotificado = new AtomicBoolean();
     private volatile int larguraTelaRemota;
     private volatile int alturaTelaRemota;
+    private BufferedImage frameBuffer;
+    private volatile long ultimoRenderFrameBuffer;
 
     public ClienteDesktopRemoto(String targetId, String localId) {
         this.idAlvo = targetId;
@@ -344,15 +353,20 @@ public class ClienteDesktopRemoto {
         new Thread(() -> {
             try {
                 while (emExecucao) {
-                    int tamanho = entradaDados.readInt();
-                    if (tamanho == -3) {
-                        processarMensagemControle(tamanho, entradaDados);
+                    int tipo = entradaDados.readInt();
+                    if (tipo == -4) {
+                        processarQuadroTile(entradaDados);
                         continue;
                     }
-                    if (tamanho <= 0 || tamanho > 32 * 1024 * 1024) {
-                        throw new IOException("Tamanho de quadro invalido: " + tamanho);
+                    if (tipo == -3) {
+                        processarMensagemControle(tipo, entradaDados);
+                        continue;
                     }
-                    receberQuadro(entradaDados, tamanho);
+                    if (tipo > 0 && tipo <= 32 * 1024 * 1024) {
+                        receberQuadro(entradaDados, tipo);
+                        continue;
+                    }
+                    throw new IOException("Tipo de mensagem invalido: " + tipo);
                 }
             } catch (Exception e) {
                 notificarConexaoEncerrada("video", e);
@@ -387,6 +401,68 @@ public class ClienteDesktopRemoto {
         }
     }
 
+    private void processarQuadroTile(DataInputStream entradaDados) throws Exception {
+        int numTiles = entradaDados.readInt();
+        if (numTiles <= 0 || numTiles > 5000) {
+            throw new IOException("Numero invalido de tiles: " + numTiles);
+        }
+
+        for (int i = 0; i < numTiles; i++) {
+            int col = entradaDados.readInt();
+            int row = entradaDados.readInt();
+            int tileW = entradaDados.readInt();
+            int tileH = entradaDados.readInt();
+            int jpegLen = entradaDados.readInt();
+            if (jpegLen <= 0 || jpegLen > 256 * 1024) {
+                throw new IOException("Tamanho de tile invalido: " + jpegLen);
+            }
+
+            byte[] jpegData = new byte[jpegLen];
+            entradaDados.readFully(jpegData);
+
+            BufferedImage tileImg = ImageIO.read(new ByteArrayInputStream(jpegData));
+            if (tileImg == null) continue;
+
+            int tileX = col * TAMANHO_TILE;
+            int tileY = row * TAMANHO_TILE;
+
+            if (frameBuffer != null) {
+                frameBuffer.getGraphics().drawImage(tileImg, tileX, tileY, null);
+            }
+        }
+
+        long agora = System.currentTimeMillis();
+        if (agora - ultimoRenderFrameBuffer > 33) {
+            ultimoRenderFrameBuffer = agora;
+            publicarFrameBuffer();
+        }
+    }
+
+    private void inicializarFrameBuffer(int largura, int altura) {
+        if (frameBuffer != null && frameBuffer.getWidth() == largura && frameBuffer.getHeight() == altura) {
+            return;
+        }
+        frameBuffer = new BufferedImage(largura, altura, BufferedImage.TYPE_INT_RGB);
+    }
+
+    private void publicarFrameBuffer() {
+        if (frameBuffer == null) return;
+
+        int largura = frameBuffer.getWidth();
+        int altura = frameBuffer.getHeight();
+        int[] pixels = frameBuffer.getRGB(0, 0, largura, altura, null, 0, largura);
+
+        WritableImage fxImage = new WritableImage(largura, altura);
+        PixelWriter pw = fxImage.getPixelWriter();
+        pw.setPixels(0, 0, largura, altura, PixelFormat.getIntArgbInstance(), pixels, 0, largura);
+
+        Image img = fxImage;
+        imagemPendente.set(img);
+        if (atualizacaoImagemAgendada.compareAndSet(false, true)) {
+            Platform.runLater(this::exibirImagemMaisRecente);
+        }
+    }
+
     private void processarMensagemControle(int tipoMensagem, DataInputStream entradaDados) throws Exception {
         if (tipoMensagem == -1) {
             long instanteOriginal = entradaDados.readLong();
@@ -412,6 +488,7 @@ public class ClienteDesktopRemoto {
             if (larguraTelaRemota <= 0 || alturaTelaRemota <= 0) {
                 throw new IOException("Dimensoes remotas invalidas");
             }
+            inicializarFrameBuffer(larguraTelaRemota, alturaTelaRemota);
             return;
         }
         throw new IOException("Tipo de mensagem de controle invalido: " + tipoMensagem);
