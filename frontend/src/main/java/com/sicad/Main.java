@@ -208,14 +208,10 @@ public class Main extends Application {
         try {
             String resposta = conexaoServidor.enviarComando("LOAD_CONFIG:" + id);
             if (resposta != null && resposta.startsWith("CONFIG:")) {
-                String[] v = resposta.substring(7).split(",");
-                if (v.length == 6) {
-                    GerenciadorConfiguracoes.aplicarConfiguracao(
-                            v[0], Integer.parseInt(v[1]),
-                            Integer.parseInt(v[2]), Double.parseDouble(v[3]),
-                            Integer.parseInt(v[4]), Double.parseDouble(v[5]));
-                    SERVIDOR_HOST = v[0];
-                    SERVIDOR_PORTA = Integer.parseInt(v[1]);
+                String[] valores = resposta.substring(7).split(",");
+                if (valores.length == 4) {
+                    GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
+                            valores[0], valores[1], valores[2], valores[3]);
                     System.out.println("Configuracoes carregadas do servidor para " + id);
                 }
             }
@@ -933,12 +929,13 @@ public class Main extends Application {
                     return;
                 }
 
+                GerenciadorConfiguracoes.salvarConfiguracoesRede(host, portStr);
+
                 SERVIDOR_HOST = host;
                 SERVIDOR_PORTA = Integer.parseInt(portStr);
-                GerenciadorConfiguracoes.aplicarCasterConfig(fps, quality, limiteKbps, escala);
 
                 if (conexaoServidor != null && conexaoServidor.isConectado() && meuID != null) {
-                    String configStr = host + "," + portStr + "," + fps + "," + quality + "," + limiteKbps + "," + escala;
+                    String configStr = fps + "," + quality + "," + limiteKbps + "," + escala;
                     new Thread(() -> {
                         try {
                             conexaoServidor.enviarComando("SAVE_CONFIG:" + meuID + ":" + configStr);
@@ -947,6 +944,9 @@ public class Main extends Application {
                         }
                     }, "salvar-config-servidor").start();
                 }
+                GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
+                        String.valueOf(fps), String.valueOf(quality),
+                        String.valueOf(limiteKbps), String.valueOf(escala));
 
                 saveMsg.setText("Configurações salvas para a próxima sessão!");
                 saveMsg.setStyle("-fx-text-fill: #10B981;");
