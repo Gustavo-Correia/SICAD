@@ -88,8 +88,8 @@ public class RemoteDesktopServer {
             System.out.println("Sessão remota iniciada com: " + clientSocket.getInetAddress());
             
             // Limita os bytes que podem aguardar no TCP; o transmissor descarta quadros antes da escrita.
-            clientSocket.setSendBufferSize(16 * 1024);
-            clientSocket.setReceiveBufferSize(16 * 1024);
+            clientSocket.setSendBufferSize(64 * 1024);
+            clientSocket.setReceiveBufferSize(8 * 1024);
             clientSocket.setTcpNoDelay(true);
 
             // Usamos DataOutputStream para o vídeo pois precisamos enviar o tamanho e depois os bytes brutos

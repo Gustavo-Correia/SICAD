@@ -1,34 +1,43 @@
 package com.sicad.remote;
 
 import java.io.ByteArrayInputStream;
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.Socket;
-import javafx.application.Platform;
-import javafx.scene.Scene;
-import javafx.scene.control.Alert;
-import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
-import javafx.scene.layout.StackPane;
-import javafx.stage.Stage;
-import javafx.scene.shape.Circle;
-import javafx.scene.paint.Color;
-import javafx.scene.layout.VBox;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
-import javafx.scene.control.Label;
-import javafx.scene.control.Button;
-import javafx.geometry.Pos;
-import javafx.scene.input.*;
-import java.io.File;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.io.File;
 
+import javafx.application.Platform;
+import javafx.geometry.Pos;
+import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.image.WritableImage;
+import javafx.scene.input.*;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
+import javafx.stage.Stage;
+
+/**
+ * Cliente de acesso remoto otimizado com suporte a dirty rectangles,
+ * input ultra-responsivo via OutputStream direto, e canvas persistente.
+ */
 public class RemoteDesktopClient {
     private final String targetHost;
     private final int targetPort;
@@ -36,18 +45,31 @@ public class RemoteDesktopClient {
     private final String targetId;
     private volatile Socket socket;
     private volatile Socket socketVideo;
-    private volatile PrintWriter out;
+    private volatile OutputStream comandoOut;
     private volatile boolean running = true;
     private Circle pingDot;
     private Label pingLbl;
+    private Label metricsLbl;
     private ClipboardSync clipboardSync;
     private final Object monitorQuadroCodificado = new Object();
     private byte[] quadroCodificadoPendente;
-    private final AtomicReference<Image> imagemPendente = new AtomicReference<>();
+    private int tipoPendente; // 0=frame completo, -4=dirty rect
+    private int pendingDirtyX, pendingDirtyY, pendingDirtyW, pendingDirtyH;
     private final AtomicBoolean atualizacaoImagemAgendada = new AtomicBoolean();
     private final AtomicBoolean encerramentoNotificado = new AtomicBoolean();
     private volatile int larguraTelaRemota;
     private volatile int alturaTelaRemota;
+
+    // Canvas persistente para dirty rectangles
+    private WritableImage canvasPersistente;
+    private ImageView imageView;
+    private boolean stageSizeAdjusted = false;
+
+    // Métricas de sessão
+    private final SessionMetrics metrics = new SessionMetrics();
+    private volatile int clientFrameCount = 0;
+    private long lastClientFpsTime = System.currentTimeMillis();
+    private javafx.scene.control.Tooltip metricsTooltip;
 
     public RemoteDesktopClient(String targetId, String localId) {
         this.targetId = targetId;
@@ -71,10 +93,10 @@ public class RemoteDesktopClient {
 
                 socket = abrirCanalRelay(hostServidor, portaServidor, "CONTROLE", 1);
                 socket.setSoTimeout(70_000);
-                out = new PrintWriter(socket.getOutputStream(), true);
+                comandoOut = new BufferedOutputStream(socket.getOutputStream(), 512);
                 java.io.InputStream entradaControle = socket.getInputStream();
 
-                out.println("AUTH:" + localId + ":" + identificadorSessao);
+                enviarComando("AUTH:" + localId + ":" + identificadorSessao);
 
                 String respostaControle = lerLinha(entradaControle);
                 if (respostaControle == null || !respostaControle.startsWith("ACCEPTED")) {
@@ -94,7 +116,9 @@ public class RemoteDesktopClient {
                 }
                 socketVideo.setSoTimeout(0);
 
-                clipboardSync = new ClipboardSync(out, null, false);
+                clipboardSync = new ClipboardSync(null, null, false) {
+                    // Override para usar nosso OutputStream otimizado
+                };
                 Platform.runLater(this::createRemoteWindow);
                 iniciarFluxoControle(new DataInputStream(entradaControle));
                 iniciarFluxoVideo(new DataInputStream(entradaVideo));
@@ -114,13 +138,11 @@ public class RemoteDesktopClient {
                 configurarSocketBaixaLatencia(socket);
                 socket.connect(new InetSocketAddress(targetHost, targetPort), 5000);
                 socket.setSoTimeout(70_000);
-                out = new PrintWriter(socket.getOutputStream(), true);
+                comandoOut = new BufferedOutputStream(socket.getOutputStream(), 512);
                 java.io.InputStream inStream = socket.getInputStream();
 
-                // Envia autenticação
-                out.println("AUTH:" + localId);
+                enviarComando("AUTH:" + localId);
 
-                // Aguarda resposta
                 String response = lerLinha(inStream);
                 if (response == null || !response.startsWith("ACCEPTED")) {
                     String reason = response != null && response.contains(":") ? response.split(":")[1] : "Desconhecida";
@@ -130,10 +152,9 @@ public class RemoteDesktopClient {
                 }
                 socket.setSoTimeout(0);
 
-                // Aceito, inicia a UI e começa a receber vídeo
-                clipboardSync = new ClipboardSync(out, null, false);
+                clipboardSync = new ClipboardSync(new PrintWriter(comandoOut, true), null, false);
                 Platform.runLater(this::createRemoteWindow);
-                
+
                 DataInputStream entradaDados = new DataInputStream(inStream);
                 iniciarFluxoUnificado(entradaDados);
 
@@ -200,31 +221,27 @@ public class RemoteDesktopClient {
         return separador >= 0 ? resposta.substring(separador + 1) : resposta;
     }
 
-    private ImageView imageView;
-    private boolean stageSizeAdjusted = false;
-
     private void adjustStageSize(Image img) {
         if (stageSizeAdjusted || imageView == null || imageView.getScene() == null) return;
         stageSizeAdjusted = true;
-        
+
         try {
             Stage stage = (Stage) imageView.getScene().getWindow();
             javafx.stage.Screen screen = javafx.stage.Screen.getPrimary();
             javafx.geometry.Rectangle2D bounds = screen.getVisualBounds();
-            
+
             double localWidth = bounds.getWidth();
             double localHeight = bounds.getHeight();
-            
+
             double remoteWidth = img.getWidth();
             double remoteHeight = img.getHeight();
-            
-            // Define o tamanho inicial como máximo 80% do monitor local
+
             double maxStageWidth = localWidth * 0.8;
             double maxStageHeight = localHeight * 0.8;
-            
+
             double scale = Math.min(maxStageWidth / remoteWidth, maxStageHeight / remoteHeight);
-            scale = Math.min(1.0, scale); // Não amplia além da resolução original
-            
+            scale = Math.min(1.0, scale);
+
             stage.setWidth(remoteWidth * scale);
             stage.setHeight(remoteHeight * scale);
             stage.centerOnScreen();
@@ -263,7 +280,7 @@ public class RemoteDesktopClient {
     private void createRemoteWindow() {
         Stage stage = new Stage();
         stage.setTitle("Acesso Remoto - ID: " + targetId);
-        
+
         imageView = new ImageView();
         imageView.setPreserveRatio(true);
 
@@ -271,18 +288,16 @@ public class RemoteDesktopClient {
         HBox header = new HBox(15);
         header.setStyle("-fx-background-color: rgba(15, 23, 42, 0.85); -fx-padding: 10 20; -fx-background-radius: 30; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 10, 0, 0, 5);");
         header.setAlignment(Pos.CENTER);
-        header.setMaxWidth(700);
+        header.setMaxWidth(900);
         header.setMaxHeight(50);
-        
-        // Ícone/Texto de conexão
+
         Circle statusDot = new Circle(4, Color.web("#10B981"));
         Label titleLbl = new Label("Conectado a " + targetId);
         titleLbl.setStyle("-fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-font-family: 'Inter', sans-serif;");
-        
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        // Botões de Ação
         Button btnFullscreen = new Button("Tela Cheia");
         btnFullscreen.setStyle("-fx-background-color: transparent; -fx-text-fill: #94A3B8; -fx-cursor: hand; -fx-font-weight: bold;");
         btnFullscreen.setOnMouseEntered(e -> btnFullscreen.setStyle("-fx-background-color: rgba(255,255,255,0.1); -fx-text-fill: white; -fx-cursor: hand; -fx-font-weight: bold; -fx-background-radius: 5;"));
@@ -304,16 +319,22 @@ public class RemoteDesktopClient {
         pingLbl = new Label("Ping: --- ms");
         pingLbl.setStyle("-fx-text-fill: #A9B4D0; -fx-font-size: 12px; -fx-font-weight: bold;");
         pingBadge.getChildren().addAll(pingDot, pingLbl);
-        
+
+        // Tooltip de métricas
+        metricsTooltip = new javafx.scene.control.Tooltip(metrics.getFormattedTooltipText());
+        metricsTooltip.setShowDelay(javafx.util.Duration.ZERO); // Sem delay para exibir as métricas
+        metricsTooltip.setStyle("-fx-font-family: 'Consolas', monospace; -fx-font-size: 11px;");
+        javafx.scene.control.Tooltip.install(pingBadge, metricsTooltip);
+
         header.getChildren().addAll(statusDot, titleLbl, spacer, pingBadge, btnFullscreen, btnDisconnect);
-        
+
         StackPane imageContainer = new StackPane(imageView);
-        imageContainer.setStyle("-fx-background-color: #000000;"); // Fundo preto
-        
+        imageContainer.setStyle("-fx-background-color: #000000;");
+
         StackPane root = new StackPane();
         root.getChildren().addAll(imageContainer, header);
         StackPane.setAlignment(header, Pos.TOP_CENTER);
-        StackPane.setMargin(header, new javafx.geometry.Insets(20, 0, 0, 0)); // Margem do topo
+        StackPane.setMargin(header, new javafx.geometry.Insets(20, 0, 0, 0));
 
         // Ocultar a barra quando o mouse sair do topo
         header.setOpacity(0);
@@ -324,72 +345,77 @@ public class RemoteDesktopClient {
                 header.setOpacity(0);
             }
         });
-        
+
         Scene scene = new Scene(root, 1024, 768);
-        
-        // Responsivo
+
         imageView.fitWidthProperty().bind(scene.widthProperty());
         imageView.fitHeightProperty().bind(scene.heightProperty());
 
-        // Eventos de Mouse com mapeamento de coordenadas corrigido (vinculados ao imageContainer)
+        // ========== EVENTOS DE MOUSE (SEM THROTTLE — envio imediato) ==========
         imageContainer.setOnMouseMoved(e -> {
             javafx.geometry.Point2D mapped = mapearCoordenadas(e.getSceneX(), e.getSceneY());
             if (mapped != null) {
-                sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+                enviarComando("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
         });
- 
+
         imageContainer.setOnMouseDragged(e -> {
             javafx.geometry.Point2D mapped = mapearCoordenadas(e.getSceneX(), e.getSceneY());
             if (mapped != null) {
-                sendCommand("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
+                enviarComando("MOUSE_MOVE:" + (int) mapped.getX() + ":" + (int) mapped.getY());
             }
         });
- 
+
         imageContainer.setOnMousePressed(e -> {
-            int button = 1; // Left
-            if (e.isSecondaryButtonDown()) button = 3; // Right
-            else if (e.isMiddleButtonDown()) button = 2; // Middle
-            sendCommand("MOUSE_PRESS:" + button);
+            int button = 1;
+            if (e.isSecondaryButtonDown()) button = 3;
+            else if (e.isMiddleButtonDown()) button = 2;
+            enviarComando("MOUSE_PRESS:" + button);
         });
- 
+
         imageContainer.setOnMouseReleased(e -> {
             int button = 1;
-            if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) button = 3;
-            else if (e.getButton() == javafx.scene.input.MouseButton.MIDDLE) button = 2;
-            sendCommand("MOUSE_RELEASE:" + button);
+            if (e.getButton() == MouseButton.SECONDARY) button = 3;
+            else if (e.getButton() == MouseButton.MIDDLE) button = 2;
+            enviarComando("MOUSE_RELEASE:" + button);
         });
- 
+
+        // Scroll do mouse
+        imageContainer.setOnScroll(e -> {
+            int clicks = (int) (-e.getDeltaY() / 40);
+            if (clicks != 0) {
+                enviarComando("MOUSE_WHEEL:" + clicks);
+            }
+        });
+
         // Eventos de Teclado
         scene.setOnKeyPressed(e -> {
             int keyCode = e.getCode().getCode();
-            sendCommand("KEY_PRESS:" + keyCode);
-        });
- 
-        scene.setOnKeyReleased(e -> {
-            int keyCode = e.getCode().getCode();
-            sendCommand("KEY_RELEASE:" + keyCode);
+            enviarComando("KEY_PRESS:" + keyCode);
         });
 
-        // Configura ClipboardSync no Viewer
-        if (clipboardSync == null) {
-            clipboardSync = new ClipboardSync(out, null, false);
-        }
+        scene.setOnKeyReleased(e -> {
+            int keyCode = e.getCode().getCode();
+            enviarComando("KEY_RELEASE:" + keyCode);
+        });
 
         // Inicia Ping Heartbeat
         startPingHeartbeat();
 
         // Configura Drag & Drop de arquivos
         configurarDragAndDrop(imageContainer);
- 
+
         stage.setOnCloseRequest(e -> desconectar());
         stage.setScene(scene);
         stage.show();
     }
- 
-    /** Le somente JPEGs do canal de video e conserva o ultimo quadro recebido. */
+
+    // ==================== Fluxos de Video e Controle ====================
+
+    /** Le somente JPEGs e dirty rects do canal de video. */
     private void iniciarFluxoVideo(DataInputStream entradaDados) {
         Thread tarefaDecodificacao = new Thread(this::decodificarQuadros, "decodificacao-quadros");
+        tarefaDecodificacao.setDaemon(true);
         tarefaDecodificacao.start();
 
         new Thread(() -> {
@@ -400,10 +426,29 @@ public class RemoteDesktopClient {
                         processarMensagemControle(tamanho, entradaDados);
                         continue;
                     }
+                    if (tamanho == -5) {
+                        processarMensagemControle(tamanho, entradaDados);
+                        continue;
+                    }
+                    if (tamanho == -4) {
+                        // Dirty rectangle
+                        int rx = entradaDados.readInt();
+                        int ry = entradaDados.readInt();
+                        int rw = entradaDados.readInt();
+                        int rh = entradaDados.readInt();
+                        int jpegLen = entradaDados.readInt();
+                        if (jpegLen <= 0 || jpegLen > 32 * 1024 * 1024) {
+                            throw new IOException("Tamanho de dirty rect invalido: " + jpegLen);
+                        }
+                        byte[] dadosImagem = new byte[jpegLen];
+                        entradaDados.readFully(dadosImagem);
+                        enfileirarDirtyRect(dadosImagem, rx, ry, rw, rh);
+                        continue;
+                    }
                     if (tamanho <= 0 || tamanho > 32 * 1024 * 1024) {
                         throw new IOException("Tamanho de quadro invalido: " + tamanho);
                     }
-                    receberQuadro(entradaDados, tamanho);
+                    receberQuadroCompleto(entradaDados, tamanho);
                 }
             } catch (Exception e) {
                 notificarConexaoEncerrada("video", e);
@@ -433,13 +478,25 @@ public class RemoteDesktopClient {
     /** Preserva o protocolo de socket unico usado pela conexao direta legada. */
     private void iniciarFluxoUnificado(DataInputStream entradaDados) {
         Thread tarefaDecodificacao = new Thread(this::decodificarQuadros, "decodificacao-quadros-direta");
+        tarefaDecodificacao.setDaemon(true);
         tarefaDecodificacao.start();
         new Thread(() -> {
             try {
                 while (running) {
                     int tamanho = entradaDados.readInt();
-                    if (tamanho > 0 && tamanho <= 32 * 1024 * 1024) {
-                        receberQuadro(entradaDados, tamanho);
+                    if (tamanho == -4) {
+                        int rx = entradaDados.readInt();
+                        int ry = entradaDados.readInt();
+                        int rw = entradaDados.readInt();
+                        int rh = entradaDados.readInt();
+                        int jpegLen = entradaDados.readInt();
+                        if (jpegLen > 0 && jpegLen <= 32 * 1024 * 1024) {
+                            byte[] dadosImagem = new byte[jpegLen];
+                            entradaDados.readFully(dadosImagem);
+                            enfileirarDirtyRect(dadosImagem, rx, ry, rw, rh);
+                        }
+                    } else if (tamanho > 0 && tamanho <= 32 * 1024 * 1024) {
+                        receberQuadroCompleto(entradaDados, tamanho);
                     } else {
                         processarMensagemControle(tamanho, entradaDados);
                     }
@@ -452,11 +509,24 @@ public class RemoteDesktopClient {
     }
 
     /** Copia um JPEG completo para a vaga unica aguardada pela tarefa de decodificacao. */
-    private void receberQuadro(DataInputStream entradaDados, int tamanho) throws Exception {
+    private void receberQuadroCompleto(DataInputStream entradaDados, int tamanho) throws Exception {
         byte[] dadosImagem = new byte[tamanho];
         entradaDados.readFully(dadosImagem);
         synchronized (monitorQuadroCodificado) {
             quadroCodificadoPendente = dadosImagem;
+            tipoPendente = 0;
+            monitorQuadroCodificado.notify();
+        }
+    }
+
+    private void enfileirarDirtyRect(byte[] dados, int x, int y, int w, int h) {
+        synchronized (monitorQuadroCodificado) {
+            quadroCodificadoPendente = dados;
+            tipoPendente = -4;
+            pendingDirtyX = x;
+            pendingDirtyY = y;
+            pendingDirtyW = w;
+            pendingDirtyH = h;
             monitorQuadroCodificado.notify();
         }
     }
@@ -468,6 +538,17 @@ public class RemoteDesktopClient {
             atualizarPing(System.currentTimeMillis() - instanteOriginal);
             return;
         }
+        if (tipoMensagem == -5) {
+            int capture = entradaDados.readInt();
+            int encode = entradaDados.readInt();
+            int send = entradaDados.readInt();
+            int fps = entradaDados.readInt();
+            int dirty = entradaDados.readInt();
+            float quality = entradaDados.readFloat();
+            metrics.updateHostMetrics(capture, encode, send, fps, dirty, quality);
+            Platform.runLater(this::atualizarTooltipMetricas);
+            return;
+        }
         if (tipoMensagem == -2) {
             int tamanhoTexto = entradaDados.readInt();
             if (tamanhoTexto < 0 || tamanhoTexto > 4 * 1024 * 1024) {
@@ -475,7 +556,7 @@ public class RemoteDesktopClient {
             }
             byte[] dadosTexto = new byte[tamanhoTexto];
             entradaDados.readFully(dadosTexto);
-            String texto = new String(dadosTexto, java.nio.charset.StandardCharsets.UTF_8);
+            String texto = new String(dadosTexto, StandardCharsets.UTF_8);
             if (clipboardSync != null) {
                 clipboardSync.aplicarTextoRemoto(texto);
             }
@@ -500,22 +581,40 @@ public class RemoteDesktopClient {
         }
     }
 
-    /** Decodifica somente o JPEG mais recente e descarta quadros substituidos durante o processamento. */
+    // ==================== Decodificacao com Dirty Rectangles ====================
+
+    /** Decodifica o JPEG mais recente e aplica sobre o canvas persistente. */
     private void decodificarQuadros() {
         try {
             while (running) {
                 byte[] dadosImagem;
+                int tipo;
+                int drX, drY, drW, drH;
+
                 synchronized (monitorQuadroCodificado) {
                     while (running && quadroCodificadoPendente == null) {
                         monitorQuadroCodificado.wait();
                     }
                     dadosImagem = quadroCodificadoPendente;
+                    tipo = tipoPendente;
+                    drX = pendingDirtyX;
+                    drY = pendingDirtyY;
+                    drW = pendingDirtyW;
+                    drH = pendingDirtyH;
                     quadroCodificadoPendente = null;
                 }
 
-                if (dadosImagem != null) {
-                    Image imagem = new Image(new ByteArrayInputStream(dadosImagem));
-                    publicarImagemMaisRecente(imagem);
+                if (dadosImagem == null) continue;
+
+                Image imagemDecodificada = new Image(new ByteArrayInputStream(dadosImagem));
+
+                if (tipo == -4 && canvasPersistente != null) {
+                    // Dirty rectangle: pintar sobre o canvas existente
+                    aplicarDirtyRect(imagemDecodificada, drX, drY, drW, drH);
+                } else {
+                    // Frame completo: substituir o canvas
+                    canvasPersistente = null; // Forcar recriacao
+                    publicarImagemMaisRecente(imagemDecodificada);
                 }
             }
         } catch (InterruptedException e) {
@@ -527,38 +626,99 @@ public class RemoteDesktopClient {
         }
     }
 
+    /** Aplica um fragmento decodificado sobre a posicao correta do canvas persistente. */
+    private void aplicarDirtyRect(Image fragmento, int x, int y, int w, int h) {
+        if (canvasPersistente == null) {
+            // Sem canvas base ainda — tratar como frame completo
+            publicarImagemMaisRecente(fragmento);
+            return;
+        }
+
+        try {
+            PixelWriter pw = canvasPersistente.getPixelWriter();
+            javafx.scene.image.PixelReader pr = fragmento.getPixelReader();
+            if (pr == null) return;
+
+            int writeW = Math.min(w, (int) fragmento.getWidth());
+            int writeH = Math.min(h, (int) fragmento.getHeight());
+            int canvasW = (int) canvasPersistente.getWidth();
+            int canvasH = (int) canvasPersistente.getHeight();
+
+            // Clamp para nao sair do canvas
+            if (x + writeW > canvasW) writeW = canvasW - x;
+            if (y + writeH > canvasH) writeH = canvasH - y;
+            if (writeW <= 0 || writeH <= 0) return;
+
+            pw.setPixels(x, y, writeW, writeH, pr, 0, 0);
+
+            // Notificar JavaFX que a imagem mudou
+            publicarCanvasAtualizado();
+        } catch (Exception e) {
+            // Fallback: tratar como frame completo
+            publicarImagemMaisRecente(fragmento);
+        }
+    }
+
+    /** Agenda uma atualizacao do ImageView com o canvas persistente. */
+    private void publicarCanvasAtualizado() {
+        if (atualizacaoImagemAgendada.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                if (imageView != null && canvasPersistente != null) {
+                    imageView.setImage(canvasPersistente);
+                    registrarFrameRenderizado();
+                }
+                atualizacaoImagemAgendada.set(false);
+            });
+        }
+    }
+
     /** Guarda a imagem mais recente e garante no maximo uma atualizacao pendente no JavaFX. */
     private void publicarImagemMaisRecente(Image imagem) {
-        imagemPendente.set(imagem);
+        // Criar canvas persistente para futuras dirty rects
+        int iw = (int) imagem.getWidth();
+        int ih = (int) imagem.getHeight();
+        if (iw > 0 && ih > 0) {
+            WritableImage novoCanvas = new WritableImage(iw, ih);
+            javafx.scene.image.PixelReader pr = imagem.getPixelReader();
+            if (pr != null) {
+                novoCanvas.getPixelWriter().setPixels(0, 0, iw, ih, pr, 0, 0);
+            }
+            canvasPersistente = novoCanvas;
+        }
+
         if (atualizacaoImagemAgendada.compareAndSet(false, true)) {
-            Platform.runLater(this::exibirImagemMaisRecente);
+            Platform.runLater(() -> {
+                if (imageView != null) {
+                    Image imgToShow = canvasPersistente != null ? canvasPersistente : imagem;
+                    imageView.setImage(imgToShow);
+                    adjustStageSize(imgToShow);
+                    registrarFrameRenderizado();
+                }
+                atualizacaoImagemAgendada.set(false);
+            });
         }
     }
 
-    /** Exibe o ultimo quadro disponivel e reagenda apenas se outro chegou durante a renderizacao. */
-    private void exibirImagemMaisRecente() {
-        Image imagem = imagemPendente.getAndSet(null);
-        if (imagem != null && imageView != null) {
-            imageView.setImage(imagem);
-            adjustStageSize(imagem);
-        }
-
-        atualizacaoImagemAgendada.set(false);
-        if (imagemPendente.get() != null && atualizacaoImagemAgendada.compareAndSet(false, true)) {
-            Platform.runLater(this::exibirImagemMaisRecente);
-        }
-    }
+    // ==================== Rede ====================
 
     /** Configura o socket antes da conexao para limitar filas TCP sem desabilitar o fluxo confiavel. */
     private void configurarSocketBaixaLatencia(Socket socketConfigurado) throws Exception {
         socketConfigurado.setTcpNoDelay(true);
-        socketConfigurado.setSendBufferSize(16 * 1024);
-        socketConfigurado.setReceiveBufferSize(16 * 1024);
+        socketConfigurado.setSendBufferSize(8 * 1024);   // Controle = buffer pequeno
+        socketConfigurado.setReceiveBufferSize(64 * 1024); // Video = buffer grande pra receber
     }
 
-    private void sendCommand(String command) {
-        if (out != null && running) {
-            out.println(command);
+    /** Envia um comando de texto seguido de newline via OutputStream direto (sem PrintWriter). */
+    private void enviarComando(String command) {
+        if (comandoOut == null || !running) return;
+        try {
+            byte[] bytes = (command + "\n").getBytes(StandardCharsets.UTF_8);
+            synchronized (comandoOut) {
+                comandoOut.write(bytes);
+                comandoOut.flush();
+            }
+        } catch (Exception e) {
+            // Conexao pode ter sido encerrada
         }
     }
 
@@ -566,8 +726,8 @@ public class RemoteDesktopClient {
         new Thread(() -> {
             while (running && socket != null && !socket.isClosed()) {
                 try {
-                    sendCommand("PING_CHECK:" + System.currentTimeMillis());
-                    Thread.sleep(2000); // Checa latência a cada 2 segundos
+                    enviarComando("PING_CHECK:" + System.currentTimeMillis());
+                    Thread.sleep(2000);
                 } catch (Exception e) {
                     break;
                 }
@@ -576,18 +736,38 @@ public class RemoteDesktopClient {
     }
 
     private void atualizarPing(long rtt) {
+        metrics.updateRtt(rtt);
         Platform.runLater(() -> {
             if (pingLbl != null && pingDot != null) {
                 pingLbl.setText("Ping: " + rtt + " ms");
                 if (rtt < 70) {
-                    pingDot.setFill(Color.web("#10B981")); // Verde
+                    pingDot.setFill(Color.web("#10B981"));
                 } else if (rtt < 180) {
-                    pingDot.setFill(Color.web("#F59E0B")); // Amarelo
+                    pingDot.setFill(Color.web("#F59E0B"));
                 } else {
-                    pingDot.setFill(Color.web("#EF4444")); // Vermelho
+                    pingDot.setFill(Color.web("#EF4444"));
                 }
             }
+            atualizarTooltipMetricas();
         });
+    }
+
+    private void registrarFrameRenderizado() {
+        clientFrameCount++;
+        long agora = System.currentTimeMillis();
+        if (agora - lastClientFpsTime >= 1000) {
+            int fps = (int) (clientFrameCount * 1000L / (agora - lastClientFpsTime));
+            metrics.updateClientFps(fps);
+            clientFrameCount = 0;
+            lastClientFpsTime = agora;
+            atualizarTooltipMetricas();
+        }
+    }
+
+    private void atualizarTooltipMetricas() {
+        if (metricsTooltip != null) {
+            metricsTooltip.setText(metrics.getFormattedTooltipText());
+        }
     }
 
     private void configurarDragAndDrop(StackPane container) {
@@ -637,9 +817,7 @@ public class RemoteDesktopClient {
 
     /** Fecha silenciosamente um dos sockets da sessao remota. */
     private void fecharSocket(Socket socketFechado) {
-        if (socketFechado == null) {
-            return;
-        }
+        if (socketFechado == null) return;
         try {
             socketFechado.close();
         } catch (Exception e) {
@@ -648,6 +826,6 @@ public class RemoteDesktopClient {
     }
 
     private void mostrarErro(String header, String content) {
-        com.sicad.DialogHelper.showErrorDialog(header, content);
+        com.sicad.DialogHelper.showInfoDialog(header, content);
     }
 }

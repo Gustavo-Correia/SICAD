@@ -270,20 +270,21 @@ public class ClientHandler implements Runnable {
         System.out.println("Ponte encerrada: " + clientIp + " <-> " + descricaoAlvo);
     }
 
-    /** Copia bytes diretamente entre sockets em blocos maiores, sem flush redundante por bloco. */
+    /** Copia bytes diretamente entre sockets em blocos maiores, com flush apos cada bloco. */
     private void retransmitir(InputStream entrada, OutputStream saida) throws Exception {
-        byte[] bloco = new byte[32 * 1024];
+        byte[] bloco = new byte[64 * 1024];
         int quantidade;
         while ((quantidade = entrada.read(bloco)) != -1) {
             saida.write(bloco, 0, quantidade);
+            saida.flush();
         }
     }
 
     /** Reduz filas TCP e desativa o atraso de pequenos comandos de controle. */
     private void configurarSocketBaixaLatencia(Socket socketConfigurado) throws SocketException {
         socketConfigurado.setTcpNoDelay(true);
-        socketConfigurado.setSendBufferSize(16 * 1024);
-        socketConfigurado.setReceiveBufferSize(16 * 1024);
+        socketConfigurado.setSendBufferSize(64 * 1024);
+        socketConfigurado.setReceiveBufferSize(64 * 1024);
     }
 
     /** Fecha um socket da ponte sem ocultar a causa original do encerramento. */

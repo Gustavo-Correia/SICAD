@@ -2,11 +2,15 @@ package com.sicad.remote;
 
 import java.awt.Robot;
 import java.awt.event.InputEvent;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.io.DataOutputStream;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.net.Socket;
 
+/**
+ * Receptor de comandos otimizado com leitura direta via InputStream,
+ * suporte a MOUSE_WHEEL e processamento sem BufferedReader.
+ */
 public class InputReceiver implements Runnable {
     private final Socket socket;
     private final DataOutputStream dataOut;
@@ -39,20 +43,39 @@ public class InputReceiver implements Runnable {
     /** Processa comandos do canal de controle ate a conexao ser encerrada. */
     @Override
     public void run() {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
-            String line;
-            while (running && (line = reader.readLine()) != null) {
-                processCommand(line.trim());
+        try {
+            InputStream in = socket.getInputStream();
+            ByteArrayOutputStream lineBuffer = new ByteArrayOutputStream(256);
+
+            while (running) {
+                int b = in.read();
+                if (b == -1) break;
+
+                if (b == '\n') {
+                    String line = lineBuffer.toString("UTF-8").trim();
+                    lineBuffer.reset();
+                    if (!line.isEmpty()) {
+                        processCommand(line);
+                    }
+                } else if (b != '\r') {
+                    lineBuffer.write(b);
+                    // Protecao contra linhas absurdamente longas
+                    if (lineBuffer.size() > 8192) {
+                        lineBuffer.reset();
+                    }
+                }
             }
         } catch (Exception e) {
-            System.out.println("InputReceiver encerrado: " + e.getMessage());
+            if (running) {
+                System.out.println("InputReceiver encerrado: " + e.getMessage());
+            }
         } finally {
             pararRecebimento();
         }
     }
 
     private void processCommand(String command) {
-        String[] parts = command.split(":", 2); // Split em 2 partes apenas para preservar o conteúdo do texto do clipboard contendo ':'
+        String[] parts = command.split(":", 2);
         if (parts.length == 0) return;
 
         try {
@@ -91,6 +114,12 @@ public class InputReceiver implements Runnable {
                         robot.mouseRelease(getMouseButton(button));
                     }
                     break;
+                case "MOUSE_WHEEL":
+                    if (parts.length >= 2) {
+                        int clicks = Integer.parseInt(parts[1]);
+                        robot.mouseWheel(clicks);
+                    }
+                    break;
                 case "KEY_PRESS":
                     if (parts.length >= 2) {
                         int keyCode = Integer.parseInt(parts[1]);
@@ -105,12 +134,11 @@ public class InputReceiver implements Runnable {
                     break;
             }
         } catch (Exception e) {
-            System.out.println("Erro ao processar comando de input: " + command);
+            // Ignora comandos mal-formados para nao interromper a sessao
         }
     }
 
     private int getMouseButton(int buttonId) {
-        // Mapeamento simples (1=Esquerdo, 2=Meio, 3=Direito)
         switch (buttonId) {
             case 1: return InputEvent.BUTTON1_DOWN_MASK;
             case 2: return InputEvent.BUTTON2_DOWN_MASK;

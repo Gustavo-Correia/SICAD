@@ -332,8 +332,10 @@ public class Main extends Application {
         try {
             socketCanal.setTcpNoDelay(true);
             socketCanal.setKeepAlive(true);
-            socketCanal.setSendBufferSize(16 * 1024);
-            socketCanal.setReceiveBufferSize(16 * 1024);
+            // Buffers diferenciados: video precisa de mais, controle precisa de menos latencia
+            int bufferSize = "VIDEO".equals(canal) ? 64 * 1024 : 8 * 1024;
+            socketCanal.setSendBufferSize(bufferSize);
+            socketCanal.setReceiveBufferSize(bufferSize);
             socketCanal.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
             PrintWriter saidaRegistro = new PrintWriter(socketCanal.getOutputStream(), true);
             saidaRegistro.println("REGISTRAR_CANAL_RELAY:" + id + ":" + canal);
