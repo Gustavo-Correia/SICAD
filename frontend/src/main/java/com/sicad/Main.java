@@ -39,6 +39,7 @@ public class Main extends Application {
 
     public static final boolean SHOW_CONSOLE = false;
 
+    public static String LOCAL_HOST = "127.0.0.1";
     public static String SERVIDOR_REMOTO_HOST = "bore.pub";
     public static int PORTA_LOCAL = 8080;
     public static int PORTA_REMOTA = 29664;
@@ -68,6 +69,7 @@ public class Main extends Application {
     public void start(Stage stage) {
         try {
             java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
+            LOCAL_HOST = props.getProperty("local.host", "127.0.0.1");
             SERVIDOR_REMOTO_HOST = props.getProperty("server.host", "bore.pub");
             PORTA_REMOTA = Integer.parseInt(props.getProperty("server.port", "29664"));
             VIDEO_HOST = props.getProperty("video.host", "bore.pub");
@@ -131,7 +133,7 @@ public class Main extends Application {
         this.conexaoServidor = new ConexaoServidor(this);
 
         this.conexaoServidor.conectarComFallback(
-                "127.0.0.1", PORTA_LOCAL,
+                LOCAL_HOST, PORTA_LOCAL,
                 SERVIDOR_REMOTO_HOST, PORTA_REMOTA
         );
 
@@ -267,7 +269,7 @@ public class Main extends Application {
                 String videoHost;
                 int videoPort;
                 if (conexaoServidor.isConexaoLocal()) {
-                    videoHost = "127.0.0.1";
+                    videoHost = LOCAL_HOST;
                     videoPort = PORTA_LOCAL;
                 } else {
                     videoHost = VIDEO_HOST;
@@ -343,7 +345,7 @@ public class Main extends Application {
 
     private Socket registrarCanalRelay(String id, String canal) throws Exception {
         if (conexaoServidor.isConexaoLocal()) {
-            return registrarCanalRelay("127.0.0.1", PORTA_LOCAL, id, canal);
+            return registrarCanalRelay(LOCAL_HOST, PORTA_LOCAL, id, canal);
         }
         return registrarCanalRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, id, canal);
     }
@@ -540,7 +542,7 @@ public class Main extends Application {
             btnReconnect.setText("Conectando...");
             new Thread(() -> {
                 conexaoServidor.conectarComFallback(
-                        "127.0.0.1", PORTA_LOCAL,
+                        "192.168.85.110", PORTA_LOCAL,
                         SERVIDOR_REMOTO_HOST, PORTA_REMOTA
                 );
                 inicializarID();
@@ -799,6 +801,12 @@ public class Main extends Application {
         portInput.getStyleClass().add("input-modern");
         portInput.setPrefWidth(300);
 
+        Label localHostLabel = new Label("Host Local (Docker/WSL IP):");
+        localHostLabel.getStyleClass().add("text-secondary");
+        TextField localHostInput = new TextField(props.getProperty("local.host", "127.0.0.1"));
+        localHostInput.getStyleClass().add("input-modern");
+        localHostInput.setPrefWidth(300);
+
         Label localPortLabel = new Label("Porta Local (Nginx Bridge):");
         localPortLabel.getStyleClass().add("text-secondary");
         TextField localPortInput = new TextField(props.getProperty("local.port"));
@@ -817,18 +825,20 @@ public class Main extends Application {
         redeGrid.add(hostInput, 1, 0);
         redeGrid.add(portLabel, 0, 1);
         redeGrid.add(portInput, 1, 1);
-        redeGrid.add(localPortLabel, 0, 2);
-        redeGrid.add(localPortInput, 1, 2);
+        redeGrid.add(localHostLabel, 0, 2);
+        redeGrid.add(localHostInput, 1, 2);
+        redeGrid.add(localPortLabel, 0, 3);
+        redeGrid.add(localPortInput, 1, 3);
 
         Label videoHostLabel = new Label("Host Direto do Vídeo:");
         videoHostLabel.getStyleClass().add("text-secondary");
-        redeGrid.add(videoHostLabel, 0, 3);
-        redeGrid.add(videoHostInput, 1, 3);
+        redeGrid.add(videoHostLabel, 0, 4);
+        redeGrid.add(videoHostInput, 1, 4);
 
         Label videoPortLabel = new Label("Porta Direta do Vídeo:");
         videoPortLabel.getStyleClass().add("text-secondary");
-        redeGrid.add(videoPortLabel, 0, 4);
-        redeGrid.add(videoPortInput, 1, 4);
+        redeGrid.add(videoPortLabel, 0, 5);
+        redeGrid.add(videoPortInput, 1, 5);
 
         Label videoHint = new Label("Vídeo usa túnel bore separado (porta 29665) para não travar os comandos. Se o viewer estiver na mesma rede, coloque o IP do servidor (ex: 192.168.1.100) e porta 5001 para o vídeo ir direto, sem bore.");
         videoHint.getStyleClass().add("text-secondary");
@@ -952,13 +962,14 @@ public class Main extends Application {
                 String portStr = portInput.getText().trim();
                 String videoHostStr = videoHostInput.getText().trim();
                 String videoPortStr = videoPortInput.getText().trim();
+                String localHostStr = localHostInput.getText().trim();
                 String localPortStr = localPortInput.getText().trim();
                 int fps = (int) fpsSlider.getValue();
                 float quality = (float) (qualitySlider.getValue() / 100.0);
                 int limiteKbps = (int) limiteBandaSlider.getValue();
                 float escala = (float) (resolucaoSlider.getValue() / 100.0);
 
-                if (host.isEmpty() || portStr.isEmpty() || localPortStr.isEmpty()
+                if (host.isEmpty() || portStr.isEmpty() || localHostStr.isEmpty() || localPortStr.isEmpty()
                         || videoHostStr.isEmpty() || videoPortStr.isEmpty()) {
                     saveMsg.setText("Erro: Preencha todos os campos.");
                     saveMsg.setStyle("-fx-text-fill: #EF4444;");
@@ -966,10 +977,11 @@ public class Main extends Application {
                 }
 
                 GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr, videoHostStr, videoPortStr,
-                        localPortStr,
+                        localHostStr, localPortStr,
                         String.valueOf(fps), String.valueOf(quality), String.valueOf(limiteKbps),
                         String.valueOf(escala));
 
+                LOCAL_HOST = localHostStr;
                 SERVIDOR_REMOTO_HOST = host;
                 PORTA_REMOTA = Integer.parseInt(portStr);
                 VIDEO_HOST = videoHostStr;

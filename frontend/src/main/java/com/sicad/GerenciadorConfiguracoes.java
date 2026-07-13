@@ -17,6 +17,7 @@ public class GerenciadorConfiguracoes {
         props.setProperty("server.port", PORTA_REMOTA_PADRAO);
         props.setProperty("video.host", "bore.pub");
         props.setProperty("video.port", "29664");
+        props.setProperty("local.host", "127.0.0.1");
         props.setProperty("local.port", "8080");
         props.setProperty("caster.fps", "15");
         props.setProperty("caster.quality", "0.85");
@@ -39,12 +40,13 @@ public class GerenciadorConfiguracoes {
 
     /** Salva rede e limites de video usados nas proximas sessoes remotas. */
     public static void salvarConfiguracoes(String host, String porta, String videoHost, String videoPort,
-            String portaLocal, String fps, String qualidade, String limiteKbps, String escala) {
+            String localHost, String portaLocal, String fps, String qualidade, String limiteKbps, String escala) {
         Properties props = carregarConfiguracoes();
         props.setProperty("server.host", host);
         props.setProperty("server.port", porta);
         props.setProperty("video.host", videoHost);
         props.setProperty("video.port", videoPort);
+        props.setProperty("local.host", localHost);
         props.setProperty("local.port", portaLocal);
         props.setProperty("caster.fps", fps);
         props.setProperty("caster.quality", qualidade);
