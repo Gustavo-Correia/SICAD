@@ -20,6 +20,7 @@ public class ConexaoServidor {
     private BufferedReader in;
     private OutputStream out;
     private volatile boolean conectado = false;
+    private volatile boolean conexaoLocal = false;
 
     private ScheduledExecutorService heartbeatScheduler;
     private ScheduledFuture<?> heartbeatTask;
@@ -36,6 +37,10 @@ public class ConexaoServidor {
 
     public boolean isConectado() {
         return conectado;
+    }
+
+    public boolean isConexaoLocal() {
+        return conexaoLocal;
     }
 
     public void conectarServidor(String host, int porta) {
@@ -88,12 +93,14 @@ public class ConexaoServidor {
                 System.out.println("Tentando conexão local: " + localHost + ":" + localPort);
                 sock = new Socket();
                 sock.connect(new java.net.InetSocketAddress(localHost, localPort), 2000);
+                conexaoLocal = true;
                 System.out.println("Conexão LOCAL estabelecida!");
             } catch (Exception e) {
                 System.out.println("Local indisponível, tentando remoto: " + remoteHost + ":" + remotePort);
                 try {
                     sock = new Socket();
                     sock.connect(new java.net.InetSocketAddress(remoteHost, remotePort), 5000);
+                    conexaoLocal = false;
                     System.out.println("Conexão REMOTA estabelecida!");
                 } catch (Exception e2) {
                     System.out.println("Erro na conexão TCP (remoto): " + e2.getMessage());

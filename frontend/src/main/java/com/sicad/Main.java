@@ -264,10 +264,19 @@ public class Main extends Application {
             Socket canalVideo = null;
             String identificadorSessao = null;
             try {
+                String videoHost;
+                int videoPort;
+                if (conexaoServidor.isConexaoLocal()) {
+                    videoHost = "127.0.0.1";
+                    videoPort = PORTA_LOCAL;
+                } else {
+                    videoHost = VIDEO_HOST;
+                    videoPort = VIDEO_PORTA;
+                }
                 try {
-                    canalVideo = registrarCanalRelay(VIDEO_HOST, VIDEO_PORTA, id, "VIDEO");
+                    canalVideo = registrarCanalRelay(videoHost, videoPort, id, "VIDEO");
                 } catch (Exception e) {
-                    System.out.println("Video direto indisponivel (" + VIDEO_HOST + ":" + VIDEO_PORTA
+                    System.out.println("Video direto indisponivel (" + videoHost + ":" + videoPort
                             + "), usando bore como fallback: " + e.getMessage());
                     canalVideo = registrarCanalRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, id, "VIDEO");
                 }
@@ -333,6 +342,9 @@ public class Main extends Application {
     }
 
     private Socket registrarCanalRelay(String id, String canal) throws Exception {
+        if (conexaoServidor.isConexaoLocal()) {
+            return registrarCanalRelay("127.0.0.1", PORTA_LOCAL, id, canal);
+        }
         return registrarCanalRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, id, canal);
     }
 
