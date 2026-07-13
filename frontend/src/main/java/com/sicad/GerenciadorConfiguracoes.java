@@ -1,79 +1,33 @@
 package com.sicad;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.util.Properties;
 
 public class GerenciadorConfiguracoes {
-    private static final String FILE_PATH = System.getProperty("user.home") + File.separator + ".sicad_settings.properties";
+    private static String host = "127.0.0.1";
+    private static int porta = 5000;
+    private static int fps = 15;
+    private static double qualidade = 0.85;
+    private static int limiteKbps = 5000;
+    private static double escala = 0.85;
 
-    public static Properties carregarConfiguracoes() {
+    public static synchronized Properties carregarConfiguracoes() {
         Properties props = new Properties();
-        props.setProperty("server.host", "127.0.0.1");
-        props.setProperty("server.port", "5000");
-        props.setProperty("caster.fps", "15");
-        props.setProperty("caster.quality", "0.85");
-        props.setProperty("caster.maxKbps", "5000");
-        props.setProperty("caster.scale", "0.85");
-
-        File file = new File(FILE_PATH);
-        if (file.exists()) {
-            try (FileInputStream in = new FileInputStream(file)) {
-                props.load(in);
-            } catch (Exception e) {
-                System.out.println("Erro ao carregar configurações: " + e.getMessage());
-            }
-        }
+        props.setProperty("server.host", host);
+        props.setProperty("server.port", String.valueOf(porta));
+        props.setProperty("caster.fps", String.valueOf(fps));
+        props.setProperty("caster.quality", String.valueOf(qualidade));
+        props.setProperty("caster.maxKbps", String.valueOf(limiteKbps));
+        props.setProperty("caster.scale", String.valueOf(escala));
         return props;
     }
 
-    public static void salvarConfiguracoesRede(String host, String porta) {
-        Properties props = new Properties();
-        props.setProperty("server.host", host);
-        props.setProperty("server.port", porta);
-
-        props.setProperty("caster.fps", "15");
-        props.setProperty("caster.quality", "0.85");
-        props.setProperty("caster.maxKbps", "5000");
-        props.setProperty("caster.scale", "0.85");
-
-        try (FileOutputStream out = new FileOutputStream(FILE_PATH)) {
-            props.store(out, "Configuracoes SICAD");
-        } catch (Exception e) {
-            System.out.println("Erro ao salvar configurações: " + e.getMessage());
-        }
-    }
-
-    public static void salvarCasterSettingsNoArquivo(String fps, String qualidade, String limiteKbps, String escala) {
-        Properties props = carregarConfiguracoes();
-        props.setProperty("caster.fps", fps);
-        props.setProperty("caster.quality", qualidade);
-        props.setProperty("caster.maxKbps", limiteKbps);
-        props.setProperty("caster.scale", escala);
-
-        try (FileOutputStream out = new FileOutputStream(FILE_PATH)) {
-            props.store(out, "Configuracoes SICAD");
-        } catch (Exception e) {
-            System.out.println("Erro ao salvar configurações: " + e.getMessage());
-        }
-    }
-
-    public static void carregarCasterSettingsDoServidor(String fps, String qualidade, String limiteKbps, String escala) {
-        salvarCasterSettingsNoArquivo(fps, qualidade, limiteKbps, escala);
-    }
-
-    public static String obterIdSalvo() {
-        return carregarConfiguracoes().getProperty("client.id", "");
-    }
-
-    public static void salvarId(String id) {
-        Properties props = carregarConfiguracoes();
-        props.setProperty("client.id", id);
-        try (FileOutputStream out = new FileOutputStream(FILE_PATH)) {
-            props.store(out, "Configuracoes SICAD");
-        } catch (Exception e) {
-            System.out.println("Erro ao salvar ID: " + e.getMessage());
-        }
+    public static synchronized void aplicarConfiguracoes(String novoHost, int novaPorta,
+            int novoFps, double novaQualidade, int novoLimiteKbps, double novaEscala) {
+        host = novoHost;
+        porta = novaPorta;
+        fps = novoFps;
+        qualidade = novaQualidade;
+        limiteKbps = novoLimiteKbps;
+        escala = novaEscala;
     }
 }

@@ -195,6 +195,7 @@ public class Main extends Application {
             String id = gerenciador.obterOuCriarID();
 
             carregarConfigServidor(id);
+            carregarHistoricoServidor(id);
 
             Platform.runLater(() -> {
                 atualizarID(id);
@@ -209,14 +210,39 @@ public class Main extends Application {
             String resposta = conexaoServidor.enviarComando("LOAD_CONFIG:" + id);
             if (resposta != null && resposta.startsWith("CONFIG:")) {
                 String[] valores = resposta.substring(7).split(",");
-                if (valores.length == 4) {
-                    GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
-                            valores[0], valores[1], valores[2], valores[3]);
+                if (valores.length == 6) {
+                    SERVIDOR_HOST = valores[0];
+                    SERVIDOR_PORTA = Integer.parseInt(valores[1]);
+                    GerenciadorConfiguracoes.aplicarConfiguracoes(
+                            SERVIDOR_HOST,
+                            SERVIDOR_PORTA,
+                            Integer.parseInt(valores[2]),
+                            Double.parseDouble(valores[3]),
+                            Integer.parseInt(valores[4]),
+                            Double.parseDouble(valores[5]));
                     System.out.println("Configuracoes carregadas do servidor para " + id);
                 }
+            } else if ("CONFIG_NOT_FOUND".equals(resposta)) {
+                System.out.println("Nenhuma configuracao salva; usando valores padrao.");
             }
         } catch (Exception e) {
             System.out.println("Erro ao carregar config do servidor: " + e.getMessage());
+        }
+    }
+
+    private void carregarHistoricoServidor(String id) {
+        try {
+            String resposta = conexaoServidor.enviarComando("LOAD_HISTORY:" + id);
+            if (resposta != null && resposta.startsWith("HISTORY:")) {
+                String conteudo = resposta.substring(8);
+                List<String> ids = conteudo.isBlank()
+                        ? List.of()
+                        : java.util.Arrays.asList(conteudo.split(","));
+                GerenciadorHistorico.substituirHistorico(ids);
+                Platform.runLater(this::atualizarRecentes);
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao carregar historico do servidor: " + e.getMessage());
         }
     }
 
@@ -672,6 +698,13 @@ public class Main extends Application {
             }
 
             GerenciadorHistorico.adicionarConexao(targetId);
+            new Thread(() -> {
+                String resposta = conexaoServidor.enviarComando(
+                        "ADD_HISTORY:" + meuID + ":" + targetId);
+                if (!"HISTORY_OK".equals(resposta)) {
+                    System.out.println("Erro ao salvar historico no servidor: " + resposta);
+                }
+            }, "salvar-historico-servidor").start();
 
             Platform.runLater(() -> {
                 atualizarRecentes();
@@ -929,27 +962,35 @@ public class Main extends Application {
                     return;
                 }
 
-                GerenciadorConfiguracoes.salvarConfiguracoesRede(host, portStr);
-
-                SERVIDOR_HOST = host;
-                SERVIDOR_PORTA = Integer.parseInt(portStr);
-
-                if (conexaoServidor != null && conexaoServidor.isConectado() && meuID != null) {
-                    String configStr = fps + "," + quality + "," + limiteKbps + "," + escala;
-                    new Thread(() -> {
-                        try {
-                            conexaoServidor.enviarComando("SAVE_CONFIG:" + meuID + ":" + configStr);
-                        } catch (Exception ex) {
-                            System.out.println("Erro ao salvar config no servidor: " + ex.getMessage());
-                        }
-                    }, "salvar-config-servidor").start();
+                if (conexaoServidor == null || !conexaoServidor.isConectado() || meuID == null) {
+                    saveMsg.setText("Erro: conecte ao servidor antes de salvar.");
+                    saveMsg.setStyle("-fx-text-fill: #EF4444;");
+                    return;
                 }
-                GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
-                        String.valueOf(fps), String.valueOf(quality),
-                        String.valueOf(limiteKbps), String.valueOf(escala));
 
-                saveMsg.setText("Configurações salvas para a próxima sessão!");
-                saveMsg.setStyle("-fx-text-fill: #10B981;");
+                int porta = Integer.parseInt(portStr);
+                String configStr = host + "," + porta + "," + fps + "," + quality
+                        + "," + limiteKbps + "," + escala;
+                saveBtn.setDisable(true);
+                saveMsg.setText("Salvando no banco...");
+                new Thread(() -> {
+                    String resposta = conexaoServidor.enviarComando(
+                            "SAVE_CONFIG:" + meuID + ":" + configStr);
+                    Platform.runLater(() -> {
+                        saveBtn.setDisable(false);
+                        if ("CONFIG_OK".equals(resposta)) {
+                            SERVIDOR_HOST = host;
+                            SERVIDOR_PORTA = porta;
+                            GerenciadorConfiguracoes.aplicarConfiguracoes(
+                                    host, porta, fps, quality, limiteKbps, escala);
+                            saveMsg.setText("Configurações salvas no banco!");
+                            saveMsg.setStyle("-fx-text-fill: #10B981;");
+                        } else {
+                            saveMsg.setText("Erro ao salvar no banco: " + resposta);
+                            saveMsg.setStyle("-fx-text-fill: #EF4444;");
+                        }
+                    });
+                }, "salvar-config-servidor").start();
             } catch (Exception ex) {
                 saveMsg.setText("Erro ao salvar: " + ex.getMessage());
                 saveMsg.setStyle("-fx-text-fill: #EF4444;");

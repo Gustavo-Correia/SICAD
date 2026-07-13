@@ -2,6 +2,7 @@ package com.sicad.socket;
 
 import com.sicad.database.ServicoCliente;
 import com.sicad.database.ServicoConfig;
+import com.sicad.database.ServicoHistorico;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -267,6 +268,8 @@ public class ManipuladorCliente implements Runnable {
                 case "GET_DEVICE_COUNT" -> processarContagemDispositivos(parts);
                 case "SAVE_CONFIG"  -> processarSalvarConfig(parts);
                 case "LOAD_CONFIG"  -> processarCarregarConfig(parts);
+                case "ADD_HISTORY"  -> processarAdicionarHistorico(parts);
+                case "LOAD_HISTORY" -> processarCarregarHistorico(parts);
                 default             -> "ERRO:Comando desconhecido";
             };
         } catch (Exception e) {
@@ -315,13 +318,26 @@ public class ManipuladorCliente implements Runnable {
     }
 
     private String processarSalvarConfig(String[] parts) throws Exception {
+        if (parts.length < 3) {
+            return "ERRO:Configuração obrigatória";
+        }
         String id = parts[1];
-        String[] valores = parts[2].split(",");
-        int fps = Integer.parseInt(valores[0]);
-        double qualidade = Double.parseDouble(valores[1]);
-        int limiteKbps = Integer.parseInt(valores[2]);
-        double escala = Double.parseDouble(valores[3]);
-        ServicoConfig.salvarConfig(id, fps, qualidade, limiteKbps, escala);
+        String[] valores = parts[2].split(",", -1);
+        if (valores.length != 6 || valores[0].isBlank()) {
+            return "ERRO:Configuração inválida";
+        }
+        String host = valores[0];
+        int porta = Integer.parseInt(valores[1]);
+        int fps = Integer.parseInt(valores[2]);
+        double qualidade = Double.parseDouble(valores[3]);
+        int limiteKbps = Integer.parseInt(valores[4]);
+        double escala = Double.parseDouble(valores[5]);
+        if (porta < 1 || porta > 65535 || fps < 1 || fps > 60
+                || qualidade < 0.1 || qualidade > 0.95
+                || limiteKbps < 1 || escala < 0.35 || escala > 1.0) {
+            return "ERRO:Configuração fora dos limites";
+        }
+        ServicoConfig.salvarConfig(id, host, porta, fps, qualidade, limiteKbps, escala);
         return "CONFIG_OK";
     }
 
@@ -332,6 +348,18 @@ public class ManipuladorCliente implements Runnable {
             return "CONFIG_NOT_FOUND";
         }
         return "CONFIG:" + String.join(",", config);
+    }
+
+    private String processarAdicionarHistorico(String[] parts) throws Exception {
+        if (parts.length < 3 || parts[1].isBlank() || parts[2].isBlank()) {
+            return "ERRO:Usuário e destino obrigatórios";
+        }
+        ServicoHistorico.adicionarConexao(parts[1], parts[2]);
+        return "HISTORY_OK";
+    }
+
+    private String processarCarregarHistorico(String[] parts) throws Exception {
+        return "HISTORY:" + String.join(",", ServicoHistorico.carregarHistorico(parts[1]));
     }
 
     private void fecharSocket() {
