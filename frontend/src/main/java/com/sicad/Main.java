@@ -3,6 +3,10 @@ package com.sicad;
 import java.io.*;
 import java.net.Socket;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.List;
+import java.util.Map;
 
 import com.sun.jna.Native;
 import com.sun.jna.win32.StdCallLibrary;
@@ -20,10 +24,10 @@ import javafx.scene.shape.SVGPath;
 import javafx.scene.shape.Circle;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
-    
-import com.sicad.remote.RemoteDesktopClient;
-import com.sicad.remote.ScreenCaster;
-import com.sicad.remote.InputReceiver;
+
+import com.sicad.remote.ClienteDesktopRemoto;
+import com.sicad.remote.TransmissorTela;
+import com.sicad.remote.ReceptorEntrada;
 import java.awt.Robot;
 
 interface Kernel32 extends StdCallLibrary {
@@ -33,31 +37,40 @@ interface Kernel32 extends StdCallLibrary {
 
 public class Main extends Application {
 
-    /** Mude para true se quiser exibir o terminal com logs */
     public static final boolean SHOW_CONSOLE = false;
 
-    /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
-    public static final String SERVIDOR_REMOTO_HOST = "sicad.felipesilva.tec.br";
-    public static final int PORTA_LOCAL = 8080;
-    public static final int PORTA_REMOTA = 40762;
-
-    /**
-     * Endereço público do túnel TCP para acesso remoto (porta 25457).
-     * Deixe vazio "" para usar o IP local (mesma rede).
-     * Ex: "bore.pub:12345"
-     */
-    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "bore.pub:40762";
+    public static String SERVIDOR_HOST = "127.0.0.1";
+    public static int SERVIDOR_PORTA = 5000;
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;
     private Circle statusDot;
     private Label statusText;
+    private Button btnReconnect;
     private Label idLabel;
-    
-    private volatile Socket relaySocket;
+    private String meuID;
+
+    private final Object monitorSessaoRelay = new Object();
+    private volatile Socket socketRelayControle;
+    private volatile Socket socketRelayVideo;
+    private volatile String identificadorSessaoAceita;
+    private volatile TransmissorTela transmissorTelaAtivo;
+    private final AtomicBoolean registroRelayIniciado = new AtomicBoolean();
+    private TextField idInput;
+    private FlowPane recentsGrid;
+    private ScrollPane centerScrollPane;
+    private List<StackPane> sidebarButtons = new java.util.ArrayList<>();
 
     @Override
     public void start(Stage stage) {
+        try {
+            java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
+            SERVIDOR_HOST = props.getProperty("server.host", "127.0.0.1");
+            SERVIDOR_PORTA = Integer.parseInt(props.getProperty("server.port", "5000"));
+        } catch (Exception e) {
+            System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());
+        }
+
         if (SHOW_CONSOLE) {
             Kernel32.INSTANCE.AllocConsole();
             try {
@@ -73,24 +86,34 @@ public class Main extends Application {
         root = new BorderPane();
         root.getStyleClass().add("root");
 
-        // 1. Sidebar (Left)
-        VBox sidebar = createSidebar();
+        VBox sidebar = criarBarraLateral();
         root.setLeft(sidebar);
 
-        // 2. Top Area (Header + Navigation)
         VBox topArea = new VBox();
-        topArea.getChildren().addAll(createHeader(), createNavigationBar());
+        topArea.getChildren().addAll(criarCabecalho());
         root.setTop(topArea);
 
-        // 3. Main Content (Center)
-        ScrollPane scrollPane = new ScrollPane();
-        scrollPane.setFitToWidth(true);
-        scrollPane.getStyleClass().add("scroll-pane");
-        scrollPane.setContent(createDashboardContent());
-        root.setCenter(scrollPane);
+        centerScrollPane = new ScrollPane();
+        centerScrollPane.setFitToWidth(true);
+        centerScrollPane.getStyleClass().add("scroll-pane");
+        centerScrollPane.setContent(criarConteudoDashboard());
+        root.setCenter(centerScrollPane);
 
         Scene scene = new Scene(root, 1400, 850);
-        String css = getClass().getResource("/com/sicad/styles.css").toExternalForm();
+        java.net.URL cssUrl = getClass().getResource("styles.css");
+        if (cssUrl == null) {
+            cssUrl = getClass().getResource("/com/sicad/styles.css");
+        }
+        if (cssUrl == null) {
+            cssUrl = Main.class.getResource("styles.css");
+        }
+        if (cssUrl == null) {
+            cssUrl = Main.class.getClassLoader().getResource("com/sicad/styles.css");
+        }
+        if (cssUrl == null) {
+            throw new RuntimeException("Não foi possível encontrar o arquivo styles.css no classpath!");
+        }
+        String css = cssUrl.toExternalForm();
         scene.getStylesheets().add(css);
 
         stage.setTitle("SICAD - Sistema Integrado de Conexão");
@@ -98,15 +121,14 @@ public class Main extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(700);
         stage.show();
-        
+
         this.conexaoServidor = new ConexaoServidor(this);
 
         this.conexaoServidor.conectarComFallback(
-                "127.0.0.1", PORTA_LOCAL,
-                SERVIDOR_REMOTO_HOST, PORTA_REMOTA
-        );   
+                SERVIDOR_HOST, SERVIDOR_PORTA,
+                SERVIDOR_HOST, SERVIDOR_PORTA
+        );
 
-        // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
     }
 
@@ -115,43 +137,49 @@ public class Main extends Application {
         if (conexaoServidor != null) {
             conexaoServidor.desconectarServidor();
         }
-        if (relaySocket != null) {
-            try { relaySocket.close(); } catch (Exception e) {}
-        }
+        encerrarSessaoRelay(null);
+        fecharSocketRelay(socketRelayControle);
+        fecharSocketRelay(socketRelayVideo);
         super.stop();
-    } 
-
-    public void atualizarStatusConexao(boolean conectado) {
-        if (statusDot != null && statusText != null) {
-            if (conectado) {
-                statusDot.setFill(Color.web("#10B981"));
-                statusText.setText("Online");
-            } else {
-                statusDot.setFill(Color.web("#EF4444"));
-                statusText.setText("Offline");
-            }
-        }
+        System.out.println("Finalizando todos os processos...");
+        System.exit(0);
     }
 
-    /**
-     * Atualiza o label de ID na tela principal.
-     */
+    public void atualizarStatusConexao(boolean conectado) {
+        Platform.runLater(() -> {
+            if (statusDot != null && statusText != null) {
+                if (conectado) {
+                    statusDot.setFill(Color.web("#10B981"));
+                    statusText.setText("Online");
+                    if (btnReconnect != null) {
+                        btnReconnect.setVisible(false);
+                        btnReconnect.setManaged(false);
+                        btnReconnect.setDisable(false);
+                        btnReconnect.setText("Reconectar");
+                    }
+                } else {
+                    statusDot.setFill(Color.web("#EF4444"));
+                    statusText.setText("Offline");
+                    if (btnReconnect != null) {
+                        btnReconnect.setVisible(true);
+                        btnReconnect.setManaged(true);
+                        btnReconnect.setDisable(false);
+                        btnReconnect.setText("Reconectar");
+                    }
+                }
+            }
+        });
+    }
+
     public void atualizarID(String id) {
+        this.meuID = id;
         if (idLabel != null) {
             idLabel.setText(id);
         }
     }
 
-    /**
-     * Inicializa o ID da máquina:
-     * 1. Aguarda a conexão com o servidor ficar pronta
-     * 2. Consulta o servidor usando o IP local
-     * 3. Se não encontrar, gera um novo ID e registra
-     * 4. Atualiza o label na UI
-     */
     private void inicializarID() {
         new Thread(() -> {
-            // Espera a conexão ficar pronta (máx ~15s — inclui probe local + remoto)
             int tentativas = 0;
             while (!conexaoServidor.isConectado() && tentativas < 60) {
                 try { Thread.sleep(250); } catch (InterruptedException e) { break; }
@@ -166,6 +194,8 @@ public class Main extends Application {
             GerenciadorID gerenciador = new GerenciadorID(conexaoServidor);
             String id = gerenciador.obterOuCriarID();
 
+            carregarConfigServidor(id);
+
             Platform.runLater(() -> {
                 atualizarID(id);
             });
@@ -174,100 +204,242 @@ public class Main extends Application {
         }, "inicializar-id").start();
     }
 
-    private void iniciarRelayHost(String id) {
-        new Thread(() -> {
-            while (!Thread.interrupted()) {
-                try {
-                    Socket sock = new Socket(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
-                    relaySocket = sock;
-                    PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
-                    out.println("REGISTER_RELAY:" + id);
-                    System.out.println("Relay host registrado: " + id);
-
-                    InputStream in = sock.getInputStream();
-                    Robot robot = new Robot();
-
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    int b;
-                    while ((b = in.read()) != -1 && b != '\n') {
-                        baos.write(b);
-                    }
-                    if (baos.size() == 0) {
-                        sock.close();
-                        continue;
-                    }
-
-                    String line = baos.toString("UTF-8").trim();
-                    if (!line.startsWith("AUTH:")) {
-                        sock.close();
-                        continue;
-                    }
-
-                    String remoteId = line.substring(5);
-                    System.out.println("Relay AUTH recebido de: " + remoteId);
-
-                    CountDownLatch latch = new CountDownLatch(1);
-                    final boolean[] accepted = {false};
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-                        alert.setTitle("Solicitação de Acesso Remoto");
-                        alert.setHeaderText("Conexão Recebida");
-                        alert.setContentText("O dispositivo " + remoteId + " deseja controlar sua máquina. Permitir?");
-                        alert.showAndWait().ifPresent(response -> {
-                            accepted[0] = response == ButtonType.OK;
-                        });
-                        latch.countDown();
-                    });
-                    latch.await();
-
-                    OutputStream os = sock.getOutputStream();
-                    if (accepted[0]) {
-                        os.write("ACCEPTED\n".getBytes());
-                        os.flush();
-
-                        DataOutputStream dataOut = new DataOutputStream(os);
-                        ScreenCaster caster = new ScreenCaster(dataOut, robot);
-                        InputReceiver receiver = new InputReceiver(sock, robot);
-
-                        Thread casterThread = new Thread(caster, "relay-caster");
-                        Thread receiverThread = new Thread(receiver, "relay-receiver");
-                        casterThread.start();
-                        receiverThread.start();
-
-                        try {
-                            receiverThread.join();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                        caster.stopCasting();
-                        System.out.println("Sessão remota encerrada via relay.");
-                    } else {
-                        os.write("REJECTED:Acesso negado pelo usuÃ¡rio\n".getBytes());
-                        os.flush();
-                    }
-
-                    sock.close();
-                } catch (Exception e) {
-                    System.out.println("Relay host: " + e.getMessage());
-                    try { Thread.sleep(3000); } catch (InterruptedException ie) { break; }
-                } finally {
-                    if (relaySocket != null) {
-                        try { relaySocket.close(); } catch (Exception e) {}
-                        relaySocket = null;
-                    }
+    private void carregarConfigServidor(String id) {
+        try {
+            String resposta = conexaoServidor.enviarComando("LOAD_CONFIG:" + id);
+            if (resposta != null && resposta.startsWith("CONFIG:")) {
+                String[] valores = resposta.substring(7).split(",");
+                if (valores.length == 4) {
+                    GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
+                            valores[0], valores[1], valores[2], valores[3]);
+                    System.out.println("Configuracoes carregadas do servidor para " + id);
                 }
             }
-        }, "relay-host").start();
+        } catch (Exception e) {
+            System.out.println("Erro ao carregar config do servidor: " + e.getMessage());
+        }
     }
 
-    private VBox createSidebar() {
+    private void iniciarRelayHost(String id) {
+        if (!registroRelayIniciado.compareAndSet(false, true)) {
+            return;
+        }
+        new Thread(() -> manterCanalControle(id), "relay-host-controle").start();
+        new Thread(() -> manterCanalVideo(id), "relay-host-video").start();
+    }
+
+    private void manterCanalControle(String id) {
+        while (!Thread.currentThread().isInterrupted()) {
+            Socket canalControle = null;
+            String identificadorSessao = null;
+            try {
+                canalControle = registrarCanalRelay(id, "CONTROLE");
+                socketRelayControle = canalControle;
+
+                String autenticacao = lerLinhaRelay(canalControle.getInputStream());
+                String[] partes = autenticacao != null ? autenticacao.split(":", 3) : new String[0];
+                if (partes.length != 3 || !"AUTH".equals(partes[0])) {
+                    enviarRespostaRelay(canalControle, "REJECTED:Autenticacao invalida");
+                    continue;
+                }
+
+                String idRemoto = partes[1];
+                identificadorSessao = partes[2];
+                if (!solicitarAutorizacaoRemota(idRemoto)) {
+                    enviarRespostaRelay(canalControle, "REJECTED:Acesso negado pelo usuario");
+                    continue;
+                }
+
+                synchronized (monitorSessaoRelay) {
+                    identificadorSessaoAceita = identificadorSessao;
+                }
+                enviarRespostaRelay(canalControle, "ACCEPTED");
+
+                DataOutputStream saidaControle = new DataOutputStream(canalControle.getOutputStream());
+                ReceptorEntrada receptor = new ReceptorEntrada(canalControle, saidaControle, new Robot());
+                receptor.run();
+                receptor.pararRecebimento();
+            } catch (Exception e) {
+                System.out.println("Canal de controle relay encerrado: " + e.getMessage());
+            } finally {
+                if (identificadorSessao != null) {
+                    encerrarSessaoRelay(identificadorSessao);
+                }
+                limparCanalRelay("CONTROLE", canalControle);
+                aguardarNovaTentativaRelay();
+            }
+        }
+    }
+
+    private void manterCanalVideo(String id) {
+        while (!Thread.currentThread().isInterrupted()) {
+            Socket canalVideo = null;
+            String identificadorSessao = null;
+            try {
+                try {
+                    canalVideo = registrarCanalRelay(SERVIDOR_HOST, SERVIDOR_PORTA, id, "VIDEO");
+                } catch (Exception e) {
+                    System.out.println("Video relay falhou (" + SERVIDOR_HOST + ":" + SERVIDOR_PORTA
+                            + "): " + e.getMessage());
+                    break;
+                }
+                socketRelayVideo = canalVideo;
+
+                String autenticacao = lerLinhaRelay(canalVideo.getInputStream());
+                String[] partes = autenticacao != null ? autenticacao.split(":", 3) : new String[0];
+                if (partes.length != 3 || !"AUTH".equals(partes[0])) {
+                    enviarRespostaRelay(canalVideo, "REJECTED:Autenticacao invalida");
+                    continue;
+                }
+
+                identificadorSessao = partes[2];
+                synchronized (monitorSessaoRelay) {
+                    if (!identificadorSessao.equals(identificadorSessaoAceita)) {
+                        enviarRespostaRelay(canalVideo, "REJECTED:Sessao nao autorizada");
+                        continue;
+                    }
+                }
+
+                enviarRespostaRelay(canalVideo, "ACCEPTED");
+                TransmissorTela transmissor = new TransmissorTela(
+                        new DataOutputStream(canalVideo.getOutputStream()), new Robot());
+                transmissorTelaAtivo = transmissor;
+                transmissor.run();
+            } catch (Exception e) {
+                System.out.println("Canal de video relay encerrado: " + e.getMessage());
+            } finally {
+                if (identificadorSessao != null) {
+                    encerrarSessaoRelay(identificadorSessao);
+                }
+                limparCanalRelay("VIDEO", canalVideo);
+                aguardarNovaTentativaRelay();
+            }
+        }
+    }
+
+    private Socket registrarCanalRelay(String host, int porta, String id, String canal) throws Exception {
+        Socket socketCanal = new Socket();
+        try {
+            socketCanal.setTcpNoDelay(true);
+            socketCanal.setKeepAlive(true);
+            socketCanal.setSendBufferSize(16 * 1024);
+            socketCanal.setReceiveBufferSize(16 * 1024);
+            socketCanal.connect(new java.net.InetSocketAddress(host, porta), 5000);
+            PrintWriter saidaRegistro = new PrintWriter(socketCanal.getOutputStream(), true);
+            saidaRegistro.println("REGISTRAR_CANAL_RELAY:" + id + ":" + canal);
+            socketCanal.setSoTimeout(5000);
+            String resposta = lerLinhaRelay(socketCanal.getInputStream());
+            if (!"REGISTRO_OK".equals(resposta)) {
+                if (resposta != null && resposta.contains("Comando desconhecido")) {
+                    throw new IOException("Backend remoto desatualizado; reconstrua o container backend-1");
+                }
+                throw new IOException("Registro do canal recusado: " + resposta);
+            }
+            socketCanal.setSoTimeout(0);
+            System.out.println("Canal relay registrado: " + id + " [" + canal + "] em " + host + ":" + porta);
+            return socketCanal;
+        } catch (Exception e) {
+            fecharSocketRelay(socketCanal);
+            throw e;
+        }
+    }
+
+    private Socket registrarCanalRelay(String id, String canal) throws Exception {
+        return registrarCanalRelay(SERVIDOR_HOST, SERVIDOR_PORTA, id, canal);
+    }
+
+    private boolean solicitarAutorizacaoRemota(String idRemoto) throws InterruptedException {
+        CountDownLatch confirmacao = new CountDownLatch(1);
+        boolean[] autorizado = {false};
+        Platform.runLater(() -> {
+            try {
+                autorizado[0] = com.sicad.AuxiliarDialogo.mostrarDialogoSolicitacaoConexao(idRemoto, 60);
+            } finally {
+                confirmacao.countDown();
+            }
+        });
+        return confirmacao.await(65, TimeUnit.SECONDS) && autorizado[0];
+    }
+
+    private String lerLinhaRelay(InputStream entrada) throws Exception {
+        ByteArrayOutputStream conteudo = new ByteArrayOutputStream();
+        int byteLido;
+        while ((byteLido = entrada.read()) != -1 && byteLido != '\n') {
+            if (conteudo.size() >= 4096) {
+                throw new IOException("Linha de handshake relay muito extensa");
+            }
+            conteudo.write(byteLido);
+        }
+        return conteudo.size() > 0 ? conteudo.toString("UTF-8").trim() : null;
+    }
+
+    private void enviarRespostaRelay(Socket socketCanal, String resposta) throws Exception {
+        OutputStream saida = socketCanal.getOutputStream();
+        saida.write((resposta + "\n").getBytes());
+        saida.flush();
+    }
+
+    private void encerrarSessaoRelay(String identificadorEsperado) {
+        Socket controle;
+        Socket video;
+        TransmissorTela transmissor;
+        synchronized (monitorSessaoRelay) {
+            if (identificadorEsperado != null && !identificadorEsperado.equals(identificadorSessaoAceita)) {
+                return;
+            }
+            identificadorSessaoAceita = null;
+            controle = socketRelayControle;
+            video = socketRelayVideo;
+            transmissor = transmissorTelaAtivo;
+            socketRelayControle = null;
+            socketRelayVideo = null;
+            transmissorTelaAtivo = null;
+        }
+        if (transmissor != null) {
+            transmissor.pararTransmissao();
+        }
+        fecharSocketRelay(controle);
+        fecharSocketRelay(video);
+    }
+
+    private void limparCanalRelay(String canal, Socket socketCanal) {
+        synchronized (monitorSessaoRelay) {
+            if ("CONTROLE".equals(canal) && socketRelayControle == socketCanal) {
+                socketRelayControle = null;
+            } else if ("VIDEO".equals(canal) && socketRelayVideo == socketCanal) {
+                socketRelayVideo = null;
+            }
+        }
+        fecharSocketRelay(socketCanal);
+    }
+
+    private void fecharSocketRelay(Socket socketCanal) {
+        if (socketCanal == null) {
+            return;
+        }
+        try {
+            socketCanal.close();
+        } catch (Exception e) {
+        }
+    }
+
+    private void aguardarNovaTentativaRelay() {
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private VBox criarBarraLateral() {
         VBox sidebar = new VBox(15);
         sidebar.getStyleClass().add("sidebar");
         sidebar.setPadding(new Insets(20, 0, 20, 0));
         sidebar.setPrefWidth(70);
         sidebar.setAlignment(Pos.TOP_CENTER);
 
-        // Icons SVG Paths
+        sidebarButtons.clear();
+
         String homeIcon = "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z";
         String linkIcon = "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z";
         String starIcon = "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
@@ -275,25 +447,22 @@ public class Main extends Application {
         String settingsIcon = "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z";
 
         sidebar.getChildren().addAll(
-                createSidebarButton(homeIcon, true),
-                createSidebarButton(linkIcon, false),
-                createSidebarButton(starIcon, false),
-                createSidebarButton(clockIcon, false),
-                createSpacer(),
-                createSidebarButton(settingsIcon, false)
+                criarBotaoBarraLateral("Início", homeIcon, true, () -> exibirDashboard()),
+                criarEspacador(),
+                criarBotaoBarraLateral("Configurações", settingsIcon, false, () -> exibirConfiguracoes())
         );
 
         return sidebar;
     }
 
-    private Region createSpacer() {
+    private Region criarEspacador() {
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
         HBox.setHgrow(spacer, Priority.ALWAYS);
         return spacer;
     }
 
-    private StackPane createSidebarButton(String svg, boolean isActive) {
+    private StackPane criarBotaoBarraLateral(String tooltipText, String svg, boolean isActive, Runnable onClick) {
         StackPane btn = new StackPane();
         btn.getStyleClass().add("sidebar-btn");
         if (isActive) btn.getStyleClass().add("active");
@@ -301,12 +470,27 @@ public class Main extends Application {
         SVGPath path = new SVGPath();
         path.setContent(svg);
         path.getStyleClass().add("sidebar-icon");
-        
+
+        Tooltip tooltip = new Tooltip(tooltipText);
+        tooltip.setShowDelay(javafx.util.Duration.millis(200));
+        tooltip.setStyle("-fx-font-size: 13px; -fx-background-color: #1E293B; -fx-text-fill: #E2E8F0; -fx-padding: 6px 12px; -fx-background-radius: 4px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 4);");
+        Tooltip.install(btn, tooltip);
+
         btn.getChildren().add(path);
+        btn.setOnMouseClicked(e -> {
+            for (StackPane b : sidebarButtons) {
+                b.getStyleClass().remove("active");
+            }
+            btn.getStyleClass().add("active");
+            if (onClick != null) {
+                onClick.run();
+            }
+        });
+        sidebarButtons.add(btn);
         return btn;
     }
 
-    private HBox createHeader() {
+    private HBox criarCabecalho() {
         HBox header = new HBox(15);
         header.getStyleClass().add("header");
         header.setAlignment(Pos.CENTER_LEFT);
@@ -322,7 +506,6 @@ public class Main extends Application {
         subtitle.getStyleClass().add("subtitle");
         titles.getChildren().addAll(title, subtitle);
 
-        // Theme Selector
         ComboBox<String> themeSelector = new ComboBox<>();
         themeSelector.getItems().addAll("Dark", "Claro", "Azul", "Laranja");
         themeSelector.setValue("Dark");
@@ -336,84 +519,73 @@ public class Main extends Application {
             }
         });
 
-        // Status Indicator
+        VBox statusContainer = new VBox(5);
+        statusContainer.setAlignment(Pos.CENTER_RIGHT);
+
         HBox statusBox = new HBox(8);
-        statusBox.setAlignment(Pos.CENTER);
+        statusBox.setAlignment(Pos.CENTER_RIGHT);
 
         statusDot = new Circle(4, Color.web("#10B981"));
         statusText = new Label("Conectado");
         statusText.getStyleClass().add("text-secondary");
         statusBox.getChildren().addAll(statusDot, statusText);
 
-        header.getChildren().addAll(logo, titles, createSpacer(), themeSelector, statusBox);
+        btnReconnect = new Button("Reconectar");
+        btnReconnect.getStyleClass().add("btn-secondary");
+        btnReconnect.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
+        btnReconnect.setVisible(false);
+        btnReconnect.setManaged(false);
+        btnReconnect.setOnAction(e -> {
+            btnReconnect.setDisable(true);
+            btnReconnect.setText("Conectando...");
+            new Thread(() -> {
+                conexaoServidor.conectarComFallback(
+                        SERVIDOR_HOST, SERVIDOR_PORTA,
+                        SERVIDOR_HOST, SERVIDOR_PORTA
+                );
+                inicializarID();
+            }).start();
+        });
+
+        statusContainer.getChildren().addAll(statusBox, btnReconnect);
+
+        header.getChildren().addAll(logo, titles, criarEspacador(), themeSelector, statusContainer);
         return header;
     }
 
-    private HBox createNavigationBar() {
-        HBox navBar = new HBox(10);
-        navBar.getStyleClass().add("nav-bar");
-        navBar.setAlignment(Pos.CENTER_LEFT);
-
-        String[] tabs = {"INÍCIO", "FAVORITOS", "SESSÕES RECENTES", "DISPOSITIVOS", "CONVITES"};
-        for (int i = 0; i < tabs.length; i++) {
-            Label tab = new Label(tabs[i]);
-            tab.getStyleClass().add("nav-tab");
-            if (i == 0) tab.getStyleClass().add("active");
-            navBar.getChildren().add(tab);
-        }
-        return navBar;
-    }
-
-    private VBox createDashboardContent() {
+    private VBox criarConteudoDashboard() {
         VBox content = new VBox(30);
         content.setPadding(new Insets(40, 60, 40, 60));
 
-        // 1. Connection Area (ID and Connect)
         HBox connectionArea = new HBox(40);
         connectionArea.setAlignment(Pos.TOP_CENTER);
-        
-        VBox myIdCard = createMyIdCard();
-        VBox connectCard = createConnectCard();
-        
+
+        VBox myIdCard = criarCartaoMeuId();
+        VBox connectCard = criarCartaoConexao();
+
         HBox.setHgrow(myIdCard, Priority.ALWAYS);
         HBox.setHgrow(connectCard, Priority.ALWAYS);
-        
+
         connectionArea.getChildren().addAll(myIdCard, connectCard);
 
-        // 2. Recent Sessions
+        HBox mainSections = new HBox(40);
+        mainSections.setAlignment(Pos.TOP_LEFT);
+
         VBox recentsSection = new VBox(15);
         Label recentsTitle = new Label("Sessões Recentes");
         recentsTitle.getStyleClass().add("title");
         recentsTitle.setStyle("-fx-font-size: 18px;");
-
-        FlowPane recentsGrid = new FlowPane(20, 20);
-        recentsGrid.getChildren().addAll(
-            createRecentCard("Notebook Casa", "EC102345", "Ontem", "desktop"),
-            createRecentCard("PC Escritório", "AB987654", "Há 2 horas", "desktop"),
-            createRecentCard("Macbook Pro", "XY123456", "12/06/2026", "desktop"),
-            createRecentCard("Celular Pessoal", "ZW987654", "10/06/2026", "mobile")
-        );
+        recentsGrid = new FlowPane(20, 20);
+        HBox.setHgrow(recentsSection, Priority.ALWAYS);
+        atualizarRecentes();
         recentsSection.getChildren().addAll(recentsTitle, recentsGrid);
+        mainSections.getChildren().addAll(recentsSection);
 
-        // 3. Info Panel
-        VBox infoSection = new VBox(15);
-        Label infoTitle = new Label("Estatísticas");
-        infoTitle.getStyleClass().add("title");
-        infoTitle.setStyle("-fx-font-size: 18px;");
-
-        HBox statsGrid = new HBox(20);
-        statsGrid.getChildren().addAll(
-            createStatCard("Conexões Hoje", "12"),
-            createStatCard("Dispositivos", "25"),
-            createStatCard("Último Acesso", "Hoje 14:32")
-        );
-        infoSection.getChildren().addAll(infoTitle, statsGrid);
-
-        content.getChildren().addAll(connectionArea, recentsSection, infoSection);
+        content.getChildren().addAll(connectionArea, mainSections);
         return content;
     }
 
-    private VBox createMyIdCard() {
+    private VBox criarCartaoMeuId() {
         VBox card = new VBox(15);
         card.getStyleClass().add("card");
         card.setAlignment(Pos.CENTER);
@@ -421,7 +593,7 @@ public class Main extends Application {
         Label title = new Label("Seu ID");
         title.getStyleClass().add("subtitle");
 
-        idLabel = new Label("Carregando...");
+        idLabel = new Label(meuID != null ? meuID : "Carregando...");
         idLabel.getStyleClass().add("id-label");
 
         HBox actions = new HBox(10);
@@ -442,7 +614,7 @@ public class Main extends Application {
         return card;
     }
 
-    private VBox createConnectCard() {
+    private VBox criarCartaoConexao() {
         VBox card = new VBox(15);
         card.getStyleClass().add("card");
         card.setAlignment(Pos.CENTER);
@@ -450,18 +622,40 @@ public class Main extends Application {
         Label title = new Label("Conectar a outro dispositivo");
         title.getStyleClass().add("subtitle");
 
-        TextField input = new TextField();
-        input.setPromptText("Digite o ID do dispositivo");
-        input.getStyleClass().add("input-modern");
-        input.setMaxWidth(400);
+        idInput = new TextField();
+        idInput.setPromptText("Digite o ID do dispositivo");
+        idInput.getStyleClass().add("input-modern");
+        idInput.setMaxWidth(400);
+
+        idInput.textProperty().addListener((obs, oldText, newText) -> {
+            if (newText.equals(oldText)) return;
+
+            String plain = newText.toUpperCase().replaceAll("[^A-Z0-9]", "");
+            if (plain.length() > 11) {
+                plain = plain.substring(0, 11);
+            }
+
+            StringBuilder formatted = new StringBuilder(plain);
+            if (plain.length() > 8) {
+                formatted.insert(8, "-");
+            }
+
+            String finalText = formatted.toString();
+            if (!newText.equals(finalText)) {
+                javafx.application.Platform.runLater(() -> {
+                    idInput.setText(finalText);
+                    idInput.positionCaret(finalText.length());
+                });
+            }
+        });
 
         Button connectBtn = new Button("Conectar");
         connectBtn.getStyleClass().add("btn-primary");
         connectBtn.setPrefWidth(200);
 
         connectBtn.setOnAction(e -> {
-            String targetId = input.getText().trim();
-            
+            String targetId = idInput.getText().trim();
+
             if (targetId.isEmpty()) {
                 mostrarAlerta("Erro", "ID inválido", "Por favor, digite um ID válido.", Alert.AlertType.WARNING);
                 return;
@@ -477,6 +671,12 @@ public class Main extends Application {
                 return;
             }
 
+            GerenciadorHistorico.adicionarConexao(targetId);
+
+            Platform.runLater(() -> {
+                atualizarRecentes();
+            });
+
             connectBtn.setDisable(true);
             connectBtn.setText("Conectando...");
 
@@ -486,38 +686,54 @@ public class Main extends Application {
                     connectBtn.setText("Conectar");
                 });
 
-                RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
-                client.connectRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                ClienteDesktopRemoto client = new ClienteDesktopRemoto(targetId, idLabel.getText());
+                client.conectarRelay(SERVIDOR_HOST, SERVIDOR_PORTA);
             }).start();
         });
 
-        card.getChildren().addAll(title, input, connectBtn);
+        card.getChildren().addAll(title, idInput, connectBtn);
         return card;
     }
 
     private void mostrarAlerta(String title, String header, String content, Alert.AlertType type) {
-        Alert alert = new Alert(type);
-        alert.setTitle(title);
-        alert.setHeaderText(header);
-        alert.setContentText(content);
-        alert.showAndWait();
+        if (type == Alert.AlertType.ERROR || type == Alert.AlertType.WARNING) {
+            com.sicad.AuxiliarDialogo.mostrarDialogoErro(header, content);
+        } else {
+            com.sicad.AuxiliarDialogo.mostrarDialogoInformativo(header, content);
+        }
     }
 
-    private VBox createRecentCard(String name, String id, String time, String type) {
+    private void atualizarRecentes() {
+        if (recentsGrid == null) return;
+        recentsGrid.getChildren().clear();
+        List<String> historico = GerenciadorHistorico.carregarHistorico();
+        if (historico.isEmpty()) {
+            Label noRecents = new Label("Nenhuma conexão recente.");
+            noRecents.getStyleClass().add("text-secondary");
+            noRecents.setStyle("-fx-font-style: italic; -fx-padding: 10 0 0 0;");
+            recentsGrid.getChildren().add(noRecents);
+        } else {
+            for (String id : historico) {
+                recentsGrid.getChildren().add(criarCartaoRecente(id));
+            }
+        }
+    }
+
+    private VBox criarCartaoRecente(String id) {
         VBox card = new VBox(8);
         card.getStyleClass().add("session-card");
         card.setPrefWidth(240);
+        card.setStyle("-fx-cursor: hand;");
 
         String monitorSvg = "M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z";
-        String phoneSvg = "M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z";
-        
+
         SVGPath icon = new SVGPath();
-        icon.setContent(type.equals("mobile") ? phoneSvg : monitorSvg);
+        icon.setContent(monitorSvg);
         icon.setFill(Color.web("#A9B4D0"));
 
         HBox header = new HBox(10);
         header.setAlignment(Pos.CENTER_LEFT);
-        Label nameLbl = new Label(name);
+        Label nameLbl = new Label("Dispositivo");
         nameLbl.getStyleClass().add("text-primary");
         nameLbl.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
         header.getChildren().addAll(icon, nameLbl);
@@ -526,29 +742,224 @@ public class Main extends Application {
         idLbl.getStyleClass().add("text-primary");
         idLbl.setStyle("-fx-font-family: 'Consolas'; -fx-font-size: 14px;");
 
-        Label timeLbl = new Label(time);
-        timeLbl.getStyleClass().add("text-secondary");
-        timeLbl.setStyle("-fx-font-size: 12px;");
+        card.getChildren().addAll(header, idLbl);
 
-        card.getChildren().addAll(header, idLbl, timeLbl);
+        card.setOnMouseClicked(e -> {
+            if (idInput != null) {
+                idInput.setText(id);
+            }
+        });
         return card;
     }
 
-    private VBox createStatCard(String title, String value) {
-        VBox card = new VBox(5);
-        card.getStyleClass().add("session-card"); // reusing simple card style
-        card.setPrefWidth(200);
-        card.setAlignment(Pos.CENTER);
+    private void exibirDashboard() {
+        if (centerScrollPane != null) {
+            centerScrollPane.setContent(criarConteudoDashboard());
+        }
+    }
 
-        Label titleLbl = new Label(title);
-        titleLbl.getStyleClass().add("text-secondary");
+    private void exibirConfiguracoes() {
+        if (centerScrollPane != null) {
+            centerScrollPane.setContent(criarConteudoConfiguracoes());
+        }
+    }
 
-        Label valLbl = new Label(value);
-        valLbl.getStyleClass().add("text-primary");
-        valLbl.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
+    private VBox criarConteudoConfiguracoes() {
+        VBox content = new VBox(25);
+        content.setPadding(new Insets(30));
+        content.getStyleClass().add("content-area");
 
-        card.getChildren().addAll(titleLbl, valLbl);
-        return card;
+        Label mainTitle = new Label("Configurações do Sistema");
+        mainTitle.getStyleClass().add("title");
+        mainTitle.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
+
+        java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
+
+        VBox redeSection = new VBox(15);
+        redeSection.getStyleClass().add("card");
+        redeSection.setPadding(new Insets(20));
+
+        Label redeTitle = new Label("Parâmetros de Rede");
+        redeTitle.getStyleClass().add("subtitle");
+        redeTitle.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+
+        GridPane redeGrid = new GridPane();
+        redeGrid.setHgap(15);
+        redeGrid.setVgap(12);
+
+        Label hostLabel = new Label("Servidor Central (Host):");
+        hostLabel.getStyleClass().add("text-secondary");
+        TextField hostInput = new TextField(props.getProperty("server.host"));
+        hostInput.getStyleClass().add("input-modern");
+        hostInput.setPrefWidth(300);
+
+        Label portLabel = new Label("Porta do Servidor Central:");
+        portLabel.getStyleClass().add("text-secondary");
+        TextField portInput = new TextField(props.getProperty("server.port"));
+        portInput.getStyleClass().add("input-modern");
+        portInput.setPrefWidth(300);
+
+        redeGrid.add(hostLabel, 0, 0);
+        redeGrid.add(hostInput, 1, 0);
+        redeGrid.add(portLabel, 0, 1);
+        redeGrid.add(portInput, 1, 1);
+
+        redeSection.getChildren().addAll(redeTitle, redeGrid);
+
+        VBox casterSection = new VBox(15);
+        casterSection.getStyleClass().add("card");
+        casterSection.setPadding(new Insets(20));
+
+        Label casterTitle = new Label("Otimizações de Transmissão de Vídeo");
+        casterTitle.getStyleClass().add("subtitle");
+        casterTitle.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+
+        GridPane casterGrid = new GridPane();
+        casterGrid.setHgap(15);
+        casterGrid.setVgap(12);
+
+        Label fpsLabel = new Label("Taxa de Quadros Limite (FPS):");
+        fpsLabel.getStyleClass().add("text-secondary");
+
+        Slider fpsSlider = new Slider(5, 60, Double.parseDouble(props.getProperty("caster.fps", "15")));
+        fpsSlider.setShowTickLabels(true);
+        fpsSlider.setShowTickMarks(true);
+        fpsSlider.setMajorTickUnit(5);
+        fpsSlider.setMinorTickCount(0);
+        fpsSlider.setSnapToTicks(true);
+        fpsSlider.setPrefWidth(300);
+
+        Label fpsValLabel = new Label(((int) fpsSlider.getValue()) + " FPS");
+        fpsValLabel.getStyleClass().add("text-primary");
+        fpsValLabel.setStyle("-fx-font-weight: bold;");
+        fpsSlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            fpsValLabel.setText(newVal.intValue() + " FPS");
+        });
+
+        Label qualityLabel = new Label("Qualidade de Compactação JPEG:");
+        qualityLabel.getStyleClass().add("text-secondary");
+
+        double currentQuality = Double.parseDouble(props.getProperty("caster.quality", "0.85")) * 100;
+        Slider qualitySlider = new Slider(50, 95, Math.min(95, Math.max(50, currentQuality)));
+        qualitySlider.setShowTickLabels(true);
+        qualitySlider.setShowTickMarks(true);
+        qualitySlider.setMajorTickUnit(20);
+        qualitySlider.setPrefWidth(300);
+
+        Label qualityValLabel = new Label(((int) qualitySlider.getValue()) + "%");
+        qualityValLabel.getStyleClass().add("text-primary");
+        qualityValLabel.setStyle("-fx-font-weight: bold;");
+        qualitySlider.valueProperty().addListener((obs, oldVal, newVal) -> {
+            qualityValLabel.setText(newVal.intValue() + "%");
+        });
+
+        casterGrid.add(fpsLabel, 0, 0);
+        casterGrid.add(fpsSlider, 1, 0);
+        casterGrid.add(fpsValLabel, 2, 0);
+
+        casterGrid.add(qualityLabel, 0, 1);
+        casterGrid.add(qualitySlider, 1, 1);
+        casterGrid.add(qualityValLabel, 2, 1);
+
+        Label limiteBandaLabel = new Label("Limite do vídeo (Kbps):");
+        limiteBandaLabel.getStyleClass().add("text-secondary");
+
+        Slider limiteBandaSlider = new Slider(1000, 10000,
+                Double.parseDouble(props.getProperty("caster.maxKbps", "5000")));
+        limiteBandaSlider.setShowTickLabels(true);
+        limiteBandaSlider.setShowTickMarks(true);
+        limiteBandaSlider.setMajorTickUnit(1000);
+        limiteBandaSlider.setBlockIncrement(128);
+        limiteBandaSlider.setPrefWidth(300);
+
+        Label limiteBandaValor = new Label(((int) limiteBandaSlider.getValue()) + " Kbps");
+        limiteBandaValor.getStyleClass().add("text-primary");
+        limiteBandaValor.setStyle("-fx-font-weight: bold;");
+        limiteBandaSlider.valueProperty().addListener((observavel, valorAntigo, valorNovo) ->
+                limiteBandaValor.setText(valorNovo.intValue() + " Kbps"));
+
+        casterGrid.add(limiteBandaLabel, 0, 2);
+        casterGrid.add(limiteBandaSlider, 1, 2);
+        casterGrid.add(limiteBandaValor, 2, 2);
+
+        Label resolucaoLabel = new Label("Resolução transmitida:");
+        resolucaoLabel.getStyleClass().add("text-secondary");
+
+        double resolucaoAtual = Double.parseDouble(props.getProperty("caster.scale", "0.85")) * 100;
+        Slider resolucaoSlider = new Slider(50, 100, Math.max(50, Math.min(100, resolucaoAtual)));
+        resolucaoSlider.setShowTickLabels(true);
+        resolucaoSlider.setShowTickMarks(true);
+        resolucaoSlider.setMajorTickUnit(10);
+        resolucaoSlider.setPrefWidth(300);
+
+        Label resolucaoValor = new Label(((int) resolucaoSlider.getValue()) + "%");
+        resolucaoValor.getStyleClass().add("text-primary");
+        resolucaoValor.setStyle("-fx-font-weight: bold;");
+        resolucaoSlider.valueProperty().addListener((observavel, valorAntigo, valorNovo) ->
+                resolucaoValor.setText(valorNovo.intValue() + "%"));
+
+        casterGrid.add(resolucaoLabel, 0, 3);
+        casterGrid.add(resolucaoSlider, 1, 3);
+        casterGrid.add(resolucaoValor, 2, 3);
+
+        casterSection.getChildren().addAll(casterTitle, casterGrid);
+
+        HBox buttonBox = new HBox(15);
+        buttonBox.setAlignment(Pos.CENTER_LEFT);
+
+        Button saveBtn = new Button("Salvar Alterações");
+        saveBtn.getStyleClass().add("btn-primary");
+        saveBtn.setPrefWidth(200);
+
+        Label saveMsg = new Label("");
+        saveMsg.setStyle("-fx-text-fill: #10B981; -fx-font-weight: bold;");
+
+        saveBtn.setOnAction(e -> {
+            try {
+                String host = hostInput.getText().trim();
+                String portStr = portInput.getText().trim();
+                int fps = (int) fpsSlider.getValue();
+                float quality = (float) (qualitySlider.getValue() / 100.0);
+                int limiteKbps = (int) limiteBandaSlider.getValue();
+                float escala = (float) (resolucaoSlider.getValue() / 100.0);
+
+                if (host.isEmpty() || portStr.isEmpty()) {
+                    saveMsg.setText("Erro: Preencha todos os campos.");
+                    saveMsg.setStyle("-fx-text-fill: #EF4444;");
+                    return;
+                }
+
+                GerenciadorConfiguracoes.salvarConfiguracoesRede(host, portStr);
+
+                SERVIDOR_HOST = host;
+                SERVIDOR_PORTA = Integer.parseInt(portStr);
+
+                if (conexaoServidor != null && conexaoServidor.isConectado() && meuID != null) {
+                    String configStr = fps + "," + quality + "," + limiteKbps + "," + escala;
+                    new Thread(() -> {
+                        try {
+                            conexaoServidor.enviarComando("SAVE_CONFIG:" + meuID + ":" + configStr);
+                        } catch (Exception ex) {
+                            System.out.println("Erro ao salvar config no servidor: " + ex.getMessage());
+                        }
+                    }, "salvar-config-servidor").start();
+                }
+                GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
+                        String.valueOf(fps), String.valueOf(quality),
+                        String.valueOf(limiteKbps), String.valueOf(escala));
+
+                saveMsg.setText("Configurações salvas para a próxima sessão!");
+                saveMsg.setStyle("-fx-text-fill: #10B981;");
+            } catch (Exception ex) {
+                saveMsg.setText("Erro ao salvar: " + ex.getMessage());
+                saveMsg.setStyle("-fx-text-fill: #EF4444;");
+            }
+        });
+
+        buttonBox.getChildren().addAll(saveBtn, saveMsg);
+
+        content.getChildren().addAll(mainTitle, redeSection, casterSection, buttonBox);
+        return content;
     }
 
     public static void main(String[] args) {

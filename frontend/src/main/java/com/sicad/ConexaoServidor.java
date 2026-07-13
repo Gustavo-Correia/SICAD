@@ -3,7 +3,6 @@ package com.sicad;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
@@ -21,6 +20,7 @@ public class ConexaoServidor {
     private BufferedReader in;
     private OutputStream out;
     private volatile boolean conectado = false;
+    private volatile boolean conexaoLocal = false;
 
     private ScheduledExecutorService heartbeatScheduler;
     private ScheduledFuture<?> heartbeatTask;
@@ -30,7 +30,6 @@ public class ConexaoServidor {
 
     private static final int HEARTBEAT_INTERVALO_SEGUNDOS = 5;
     private static final int RESPOSTA_TIMEOUT_SEGUNDOS = 10;
-    private static final int PROBE_TIMEOUT_MS = 2000;
 
     public ConexaoServidor(Main mainApp) {
         this.mainApp = mainApp;
@@ -40,72 +39,102 @@ public class ConexaoServidor {
         return conectado;
     }
 
-    /**
-     * Tenta conexão local (Docker) primeiro; se indisponível, tenta porta
-     * do cloudflared client (túnel TCP — ver README).
-     */
-    public void conectarComFallback(String hostLocal, int portaLocal, String hostRemoto, int portaRemota) {
-        new Thread(() -> {
-            String host;
-            int porta;
-
-            if (probeConexao(hostLocal, portaLocal)) {
-                host = hostLocal;
-                porta = portaLocal;
-                System.out.println("Servidor local disponível — conectando em " + host + ":" + porta);
-            } else if (probeConexao(hostRemoto, portaRemota)) {
-                host = hostRemoto;
-                porta = portaRemota;
-                System.out.println("Servidor local indisponível — conectando em " + host + ":" + porta);
-            } else {
-                System.out.println("Nenhum servidor disponível (local nem remoto).");
-                return;
-            }
-
-            conectarServidor(host, porta);
-        }, "conexao-servidor-fallback").start();
+    public boolean isConexaoLocal() {
+        return conexaoLocal;
     }
 
     public void conectarServidor(String host, int porta) {
-        try {
-            this.socket = new Socket(host, porta);
-            this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            this.out = socket.getOutputStream();
-            this.conectado = true;
+        new Thread(() -> {
+            try {
+                this.socket = new Socket(host, porta);
+                this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                this.out = socket.getOutputStream();
+                this.conectado = true;
 
-            System.out.println("Conectado com sucesso ao servidor TCP em " + host + ":" + porta + "!");
-            Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
+                System.out.println("Conectado com sucesso ao servidor TCP!");
+                Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
 
-            iniciarHeartbeat();
+                iniciarHeartbeat();
 
-            String linha;
-            while (conectado && (linha = in.readLine()) != null) {
-                String mensagem = linha.trim();
+                // Loop de leitura — roda até o servidor fechar a conexão
+                String linha;
+                while (conectado && (linha = in.readLine()) != null) {
+                    String mensagem = linha.trim();
 
-                if ("PONG".equals(mensagem)) {
-                    continue;
+                    if ("PONG".equals(mensagem)) {
+                        // Resposta do heartbeat, não precisa processar
+                        continue;
+                    }
+
+                    // Coloca na fila para quem está esperando resposta de comando
+                    respostas.put(mensagem);
                 }
 
-                respostas.put(mensagem);
+                System.out.println("Conexão com o servidor foi encerrada.");
+
+            } catch (Exception e) {
+                System.out.println("Erro na conexão TCP: " + e.getMessage());
+            } finally {
+                desconectarServidor();
             }
-
-            System.out.println("Conexão com o servidor foi encerrada.");
-
-        } catch (Exception e) {
-            System.out.println("Erro na conexão TCP: " + e.getMessage());
-        } finally {
-            desconectarServidor();
-        }
+        }, "conexao-servidor").start();
     }
 
-    private boolean probeConexao(String host, int porta) {
-        try (Socket probe = new Socket()) {
-            probe.connect(new InetSocketAddress(host, porta), PROBE_TIMEOUT_MS);
-            return true;
-        } catch (Exception e) {
-            System.out.println("Indisponível " + host + ":" + porta + " — " + e.getMessage());
-            return false;
-        }
+    /**
+     * Tenta conectar no servidor local primeiro (mesma máquina que roda o Docker).
+     * Se falhar, tenta o endereço remoto (bore tunnel).
+     */
+    public void conectarComFallback(String localHost, int localPort, String remoteHost, int remotePort) {
+        new Thread(() -> {
+            Socket sock = null;
+
+            // Tenta local primeiro
+            try {
+                System.out.println("Tentando conexão local: " + localHost + ":" + localPort);
+                sock = new Socket();
+                sock.connect(new java.net.InetSocketAddress(localHost, localPort), 2000);
+                conexaoLocal = true;
+                System.out.println("Conexão LOCAL estabelecida!");
+            } catch (Exception e) {
+                System.out.println("Local indisponível, tentando remoto: " + remoteHost + ":" + remotePort);
+                try {
+                    sock = new Socket();
+                    sock.connect(new java.net.InetSocketAddress(remoteHost, remotePort), 5000);
+                    conexaoLocal = false;
+                    System.out.println("Conexão REMOTA estabelecida!");
+                } catch (Exception e2) {
+                    System.out.println("Erro na conexão TCP (remoto): " + e2.getMessage());
+                    Platform.runLater(() -> mainApp.atualizarStatusConexao(false));
+                    return;
+                }
+            }
+
+            try {
+                this.socket = sock;
+                this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                this.out = socket.getOutputStream();
+                this.conectado = true;
+
+                Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
+
+                iniciarHeartbeat();
+
+                String linha;
+                while (conectado && (linha = in.readLine()) != null) {
+                    String mensagem = linha.trim();
+                    if ("PONG".equals(mensagem)) {
+                        continue;
+                    }
+                    respostas.put(mensagem);
+                }
+
+                System.out.println("Conexão com o servidor foi encerrada.");
+            } catch (Exception e) {
+                System.out.println("Erro na conexão TCP: " + e.getMessage());
+            } finally {
+                desconectarServidor();
+            }
+        }, "conexao-servidor").start();
     }
 
     /**

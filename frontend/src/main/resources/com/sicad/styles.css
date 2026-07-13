@@ -219,3 +219,21 @@
 .scroll-pane > .viewport {
     -fx-background-color: transparent;
 }
+
+/* Slider Styling */
+.slider .thumb {
+    -fx-background-color: -color-accent;
+    -fx-background-radius: 10;
+}
+.slider .thumb:hover {
+    -fx-background-color: -color-accent-hover;
+}
+.slider .track {
+    -fx-background-color: -color-bg-sec;
+    -fx-background-radius: 5;
+    -fx-border-color: -color-border;
+    -fx-border-radius: 5;
+}
+.slider .axis {
+    -fx-tick-label-fill: -color-text-muted;
+}

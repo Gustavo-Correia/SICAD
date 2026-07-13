@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: sicad_postgres
+    container_name: postgres
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -12,65 +12,56 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - sicad_network
 
   redis:
     image: redis:7-alpine
-    container_name: sicad_redis
+    container_name: redis
     restart: always
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     networks:
-      - network
+      - sicad_network
 
   backend-1:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: sicad_backend-1
+    container_name: backend-1
     restart: always
-    env_file:
-      - .env
+    depends_on:
+      - postgres
+      - redis
+    env_file: .env
     environment:
       DB_HOST: postgres
-      DB_PORT: 5432
-    depends_on:
-      postgres:
-        condition: service_healthy
+      REDIS_HOST: redis
     ports:
       - "5001:5000"
     networks:
-      - network
+      - sicad_network
 
   backend-2:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: sicad_backend-2
+    container_name: backend-2
     restart: always
-    env_file:
-      - .env
+    depends_on:
+      - postgres
+      - redis
+    env_file: .env
     environment:
       DB_HOST: postgres
-      DB_PORT: 5432
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "5002:5000"
+      REDIS_HOST: redis
     networks:
-      - network
+      - sicad_network
 
   nginx:
     image: nginx:alpine
-    container_name: sicad_load-balancer
+    container_name: load-balancer
     restart: always
     depends_on:
       - backend-1
@@ -80,22 +71,22 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
-      - network
+      - sicad_network
 
   bore:
     image: ekzhang/bore:latest
     container_name: sicad_bore
+    command: "local 8080 --local-host nginx --to bore.pub --port 29664"
     restart: always
-    command: local 8080 --to bore.pub --local-host sicad_load-balancer
     depends_on:
       - nginx
     networks:
-      - network
+      - sicad_network
 
 volumes:
   postgres_data:
   redis_data:
 
 networks:
-  network:
+  sicad_network:
     driver: bridge
