@@ -77,6 +77,16 @@ services:
     networks:
       - sicad_network
 
+  bore-video:
+    image: ekzhang/bore:latest
+    container_name: sicad_bore_video
+    command: "local --local-host backend-1 --to bore.pub -p 29665 5000"
+    restart: always
+    depends_on:
+      - backend-1
+    networks:
+      - sicad_network
+
 volumes:
   postgres_data:
   redis_data:

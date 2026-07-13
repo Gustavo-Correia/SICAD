@@ -44,8 +44,8 @@ public class Main extends Application {
     public static String SERVIDOR_REMOTO_HOST = "bore.pub";
     public static int PORTA_LOCAL = 5001;
     public static int PORTA_REMOTA = 29664;
-    public static String VIDEO_HOST = "localhost";
-    public static int VIDEO_PORTA = 5001;
+    public static String VIDEO_HOST = "bore.pub";
+    public static int VIDEO_PORTA = 29665;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
@@ -80,8 +80,8 @@ public class Main extends Application {
             java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
             SERVIDOR_REMOTO_HOST = props.getProperty("server.host", "bore.pub");
             PORTA_REMOTA = Integer.parseInt(props.getProperty("server.port", "29664"));
-            VIDEO_HOST = props.getProperty("video.host", "localhost");
-            VIDEO_PORTA = Integer.parseInt(props.getProperty("video.port", "5001"));
+            VIDEO_HOST = props.getProperty("video.host", "bore.pub");
+            VIDEO_PORTA = Integer.parseInt(props.getProperty("video.port", "29665"));
             PORTA_LOCAL = Integer.parseInt(props.getProperty("local.port", "5001"));
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());
@@ -847,11 +847,11 @@ public class Main extends Application {
         localPortInput.getStyleClass().add("input-modern");
         localPortInput.setPrefWidth(300);
 
-        TextField videoHostInput = new TextField(props.getProperty("video.host", "localhost"));
+        TextField videoHostInput = new TextField(props.getProperty("video.host", "bore.pub"));
         videoHostInput.getStyleClass().add("input-modern");
         videoHostInput.setPrefWidth(300);
 
-        TextField videoPortInput = new TextField(props.getProperty("video.port", "5001"));
+        TextField videoPortInput = new TextField(props.getProperty("video.port", "29665"));
         videoPortInput.getStyleClass().add("input-modern");
         videoPortInput.setPrefWidth(300);
 
@@ -871,6 +871,12 @@ public class Main extends Application {
         videoPortLabel.getStyleClass().add("text-secondary");
         redeGrid.add(videoPortLabel, 0, 4);
         redeGrid.add(videoPortInput, 1, 4);
+
+        Label videoHint = new Label("Vídeo usa túnel bore separado (porta 29665) para não travar os comandos. Se o viewer estiver na mesma rede, coloque o IP do servidor (ex: 192.168.1.100) e porta 5001 para o vídeo ir direto, sem bore.");
+        videoHint.getStyleClass().add("text-secondary");
+        videoHint.setWrapText(true);
+        videoHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #94A3B8;");
+        redeGrid.add(videoHint, 1, 5);
 
         redeSection.getChildren().addAll(redeTitle, redeGrid);
 
