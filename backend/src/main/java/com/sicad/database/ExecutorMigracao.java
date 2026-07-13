@@ -3,7 +3,7 @@ package com.sicad.database;
 import io.github.cdimascio.dotenv.Dotenv;
 import org.flywaydb.core.Flyway;
 
-public class MigrationRunner {
+public class ExecutorMigracao {
 
     public static void rodarMigrations() {
         Dotenv dotenv = Dotenv.configure()
@@ -28,9 +28,7 @@ public class MigrationRunner {
 
         Flyway flyway = Flyway.configure()
             .dataSource(url, user, password)
-            // Localização dos arquivos SQL de migration no classpath
             .locations("classpath:db/migration")
-            // Cria o schema_history se não existir
             .baselineOnMigrate(true)
             .load();
 

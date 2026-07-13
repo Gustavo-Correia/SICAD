@@ -14,7 +14,7 @@ import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageOutputStream;
 
-public class ScreenCaster implements Runnable {
+public class TransmissorTela implements Runnable {
     private final DataOutputStream saida;
     private final Robot robo;
     private final Object monitorQuadro = new Object();
@@ -28,8 +28,7 @@ public class ScreenCaster implements Runnable {
     private int larguraTelaInformada;
     private int alturaTelaInformada;
 
-    /** Cria o transmissor e carrega os limites de captura e compressao configurados. */
-    public ScreenCaster(DataOutputStream saida, Robot robo) {
+    public TransmissorTela(DataOutputStream saida, Robot robo) {
         this.saida = saida;
         this.robo = robo;
 
@@ -50,7 +49,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Interrompe a captura e acorda a transmissao caso ela esteja aguardando um quadro. */
     public void pararTransmissao() {
         this.emExecucao = false;
         synchronized (monitorQuadro) {
@@ -58,7 +56,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Captura a tela na taxa configurada e conserva somente o quadro mais recente. */
     @Override
     public void run() {
         Rectangle areaTela = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
@@ -97,7 +94,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Codifica e envia o quadro mais novo disponivel, descartando capturas substituidas. */
     private void transmitirQuadros() {
         ImageWriter escritor = ImageIO.getImageWritersByFormatName("jpg").next();
         ImageWriteParam parametros = escritor.getDefaultWriteParam();
@@ -137,7 +133,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Informa ao cliente a resolucao real usada para converter coordenadas do mouse. */
     private void enviarDimensoesSeAlteradas(int largura, int altura) throws Exception {
         if (largura == larguraTelaInformada && altura == alturaTelaInformada) {
             return;
@@ -149,7 +144,6 @@ public class ScreenCaster implements Runnable {
         alturaTelaInformada = altura;
     }
 
-    /** Codifica uma imagem em JPEG usando a qualidade solicitada pelo usuario, sem reducao progressiva. */
     private byte[] codificarJpeg(ImageWriter escritor, ImageWriteParam parametros,
             BufferedImage quadro, float qualidade) throws Exception {
         parametros.setCompressionQuality(qualidade);
@@ -161,7 +155,6 @@ public class ScreenCaster implements Runnable {
         return fluxoDados.toByteArray();
     }
 
-    /** Envia a resposta do medidor de latencia pelo canal binario de controle. */
     public static void enviarPong(DataOutputStream saida, long instanteOriginal) {
         if (saida == null) {
             return;
@@ -177,7 +170,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Envia o texto da area de transferencia pelo canal binario de controle. */
     public static void enviarClipboard(DataOutputStream saida, String texto) {
         if (saida == null) {
             return;
@@ -195,7 +187,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Aguarda uma captura e retira atomicamente apenas a versao mais recente. */
     private BufferedImage aguardarQuadroMaisRecente() throws InterruptedException {
         synchronized (monitorQuadro) {
             while (emExecucao && quadroPendente == null) {
@@ -207,7 +198,6 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    /** Compara amostras de dois quadros com passo 4 para detectar mudancas rapidamente. */
     private boolean quadrosSaoSimilares(BufferedImage primeiro, BufferedImage segundo) {
         if (primeiro == null || segundo == null) {
             return false;
@@ -230,7 +220,6 @@ public class ScreenCaster implements Runnable {
         return true;
     }
 
-    /** Reduz a resolucao do quadro antes da codificacao JPEG para limitar o trafego. */
     private BufferedImage redimensionarImagem(BufferedImage original, double escala) {
         int largura = (int) (original.getWidth() * escala);
         int altura = (int) (original.getHeight() * escala);

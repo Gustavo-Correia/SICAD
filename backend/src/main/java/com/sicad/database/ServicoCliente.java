@@ -5,9 +5,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
-public class ClientService {
+public class ServicoCliente {
 
-    public static void registerClient(String identificador, String enderecoIp) throws SQLException {
+    public static void registrarCliente(String identificador, String enderecoIp) throws SQLException {
         String sql = """
             INSERT INTO clientes (identificador, enderecoip)
             VALUES (?, ?)
@@ -15,7 +15,7 @@ public class ClientService {
             SET enderecoip = EXCLUDED.enderecoip
             """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = ConexaoBanco.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, identificador);
             stmt.setString(2, enderecoIp);
@@ -23,10 +23,10 @@ public class ClientService {
         }
     }
 
-    public static String getClientIp(String identificador) throws SQLException {
+    public static String obterIpCliente(String identificador) throws SQLException {
         String sql = "SELECT enderecoip FROM clientes WHERE identificador = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = ConexaoBanco.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, identificador);
             try (ResultSet rs = stmt.executeQuery()) {
@@ -38,10 +38,10 @@ public class ClientService {
         return null;
     }
 
-    public static String getClientIdByIp(String enderecoIp) throws SQLException {
+    public static String obterIdClientePorIp(String enderecoIp) throws SQLException {
         String sql = "SELECT identificador FROM clientes WHERE enderecoip = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = ConexaoBanco.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, enderecoIp);
             try (ResultSet rs = stmt.executeQuery()) {
@@ -53,10 +53,10 @@ public class ClientService {
         return null;
     }
 
-    public static int getDeviceCount() throws SQLException {
+    public static int obterContagemDispositivos() throws SQLException {
         String sql = "SELECT COUNT(*) FROM clientes";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = ConexaoBanco.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql);
              ResultSet rs = stmt.executeQuery()) {
             if (rs.next()) {

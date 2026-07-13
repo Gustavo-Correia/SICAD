@@ -5,42 +5,41 @@ import java.awt.datatransfer.*;
 import java.io.PrintWriter;
 import java.io.DataOutputStream;
 
-public class ClipboardSync {
-    private final PrintWriter socketOut; // Usado pelo Viewer -> envia via comando de linha
-    private final DataOutputStream dataOut; // Usado pelo Host -> envia via pacote binário
-    private final boolean isHost;
-    private String lastTextCopied = "";
-    private volatile boolean running = true;
+public class SincronizadorAreaTransferencia {
+    private final PrintWriter saidaSocket;
+    private final DataOutputStream saidaDados;
+    private final boolean ehHost;
+    private String ultimoTextoCopiado = "";
+    private volatile boolean emExecucao = true;
 
-    public ClipboardSync(PrintWriter socketOut, DataOutputStream dataOut, boolean isHost) {
-        this.socketOut = socketOut;
-        this.dataOut = dataOut;
-        this.isHost = isHost;
+    public SincronizadorAreaTransferencia(PrintWriter socketOut, DataOutputStream dataOut, boolean isHost) {
+        this.saidaSocket = socketOut;
+        this.saidaDados = dataOut;
+        this.ehHost = isHost;
         iniciarMonitoramentoLocal();
     }
 
     public void stop() {
-        this.running = false;
+        this.emExecucao = false;
     }
 
     private void iniciarMonitoramentoLocal() {
         new Thread(() -> {
             try {
                 Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-                while (running) {
+                while (emExecucao) {
                     try {
                         Transferable contents = clipboard.getContents(null);
                         if (contents != null && contents.isDataFlavorSupported(DataFlavor.stringFlavor)) {
                             String text = (String) contents.getTransferData(DataFlavor.stringFlavor);
-                            if (text != null && !text.isEmpty() && !text.equals(lastTextCopied)) {
-                                lastTextCopied = text;
+                            if (text != null && !text.isEmpty() && !text.equals(ultimoTextoCopiado)) {
+                                ultimoTextoCopiado = text;
                                 enviarTextoRemoto(text);
                             }
                         }
                     } catch (Exception e) {
-                        // ignora erros de clipboard ocupada temporariamente
                     }
-                    Thread.sleep(1500); // Checa a cada 1.5s
+                    Thread.sleep(1500);
                 }
             } catch (Exception e) {
                 System.out.println("Erro no monitor de Clipboard: " + e.getMessage());
@@ -49,26 +48,26 @@ public class ClipboardSync {
     }
 
     private void enviarTextoRemoto(String text) {
-        if (isHost) {
-            if (dataOut != null) {
-                ScreenCaster.enviarClipboard(dataOut, text);
+        if (ehHost) {
+            if (saidaDados != null) {
+                TransmissorTela.enviarClipboard(saidaDados, text);
             }
         } else {
-            if (socketOut != null) {
+            if (saidaSocket != null) {
                 String escaped = text.replace("\n", "\\n").replace("\r", "\\r");
-                synchronized (socketOut) {
-                    socketOut.println("CLIPBOARD_SYNC:" + escaped);
+                synchronized (saidaSocket) {
+                    saidaSocket.println("CLIPBOARD_SYNC:" + escaped);
                 }
             }
         }
     }
 
     public void aplicarTextoRemoto(String originalText) {
-        if (originalText == null || originalText.equals(lastTextCopied)) {
+        if (originalText == null || originalText.equals(ultimoTextoCopiado)) {
             return;
         }
-        lastTextCopied = originalText;
-        
+        ultimoTextoCopiado = originalText;
+
         new Thread(() -> {
             try {
                 Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();

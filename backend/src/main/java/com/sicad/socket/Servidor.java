@@ -17,7 +17,7 @@ public class Servidor {
 
             while (true) {
                 Socket cliente = servidor.accept();
-                pool.execute(new ClientHandler(cliente));
+                pool.execute(new ManipuladorCliente(cliente));
             }
         } catch (Exception e) {
             e.printStackTrace();

@@ -24,10 +24,10 @@ import javafx.scene.shape.SVGPath;
 import javafx.scene.shape.Circle;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
-    
-import com.sicad.remote.RemoteDesktopClient;
-import com.sicad.remote.ScreenCaster; // Trigger LS refresh
-import com.sicad.remote.InputReceiver;
+
+import com.sicad.remote.ClienteDesktopRemoto;
+import com.sicad.remote.TransmissorTela;
+import com.sicad.remote.ReceptorEntrada;
 import java.awt.Robot;
 
 interface Kernel32 extends StdCallLibrary {
@@ -37,22 +37,13 @@ interface Kernel32 extends StdCallLibrary {
 
 public class Main extends Application {
 
-    /** Mude para true se quiser exibir o terminal com logs */
     public static final boolean SHOW_CONSOLE = false;
 
-    /** Subdomínio público (Cloudflare Tunnel → nginx:8080) */
     public static String SERVIDOR_REMOTO_HOST = "bore.pub";
     public static int PORTA_LOCAL = 5001;
     public static int PORTA_REMOTA = 29664;
     public static String VIDEO_HOST = "bore.pub";
     public static int VIDEO_PORTA = 29665;
-
-    /**
-     * Endereço público do túnel TCP para acesso remoto (porta 25457).
-     * Deixe vazio "" para usar o IP local (mesma rede).
-     * Ex: "bore.pub:12345"
-     */
-    public static final String REMOTE_DESKTOP_PUBLIC_ADDR = "bore.pub:40762";
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;
@@ -61,19 +52,18 @@ public class Main extends Application {
     private Button btnReconnect;
     private Label idLabel;
     private String meuID;
-    
+
     private final Object monitorSessaoRelay = new Object();
     private volatile Socket socketRelayControle;
     private volatile Socket socketRelayVideo;
     private volatile String identificadorSessaoAceita;
-    private volatile ScreenCaster transmissorTelaAtivo;
+    private volatile TransmissorTela transmissorTelaAtivo;
     private final AtomicBoolean registroRelayIniciado = new AtomicBoolean();
     private TextField idInput;
     private FlowPane recentsGrid;
     private ScrollPane centerScrollPane;
     private List<StackPane> sidebarButtons = new java.util.ArrayList<>();
 
-    /** Inicializa a interface, carrega as configuracoes e conecta o aplicativo ao servidor. */
     @Override
     public void start(Stage stage) {
         try {
@@ -102,20 +92,17 @@ public class Main extends Application {
         root = new BorderPane();
         root.getStyleClass().add("root");
 
-        // 1. Sidebar (Left)
-        VBox sidebar = createSidebar();
+        VBox sidebar = criarBarraLateral();
         root.setLeft(sidebar);
 
-        // 2. Top Area (Header + Navigation)
         VBox topArea = new VBox();
-        topArea.getChildren().addAll(createHeader());
+        topArea.getChildren().addAll(criarCabecalho());
         root.setTop(topArea);
 
-        // 3. Main Content (Center)
         centerScrollPane = new ScrollPane();
         centerScrollPane.setFitToWidth(true);
         centerScrollPane.getStyleClass().add("scroll-pane");
-        centerScrollPane.setContent(createDashboardContent());
+        centerScrollPane.setContent(criarConteudoDashboard());
         root.setCenter(centerScrollPane);
 
         Scene scene = new Scene(root, 1400, 850);
@@ -140,7 +127,7 @@ public class Main extends Application {
         stage.setMinWidth(1000);
         stage.setMinHeight(700);
         stage.show();
-        
+
         this.conexaoServidor = new ConexaoServidor(this);
 
         this.conexaoServidor.conectarComFallback(
@@ -148,11 +135,9 @@ public class Main extends Application {
                 SERVIDOR_REMOTO_HOST, PORTA_REMOTA
         );
 
-        // Iniciar verificação/geração de ID em background (usa a mesma conexão)
         inicializarID();
     }
 
-    /** Encerra conexoes administrativas e os dois canais da sessao remota. */
     @Override
     public void stop() throws Exception {
         if (conexaoServidor != null) {
@@ -164,7 +149,7 @@ public class Main extends Application {
         super.stop();
         System.out.println("Finalizando todos os processos...");
         System.exit(0);
-    } 
+    }
 
     public void atualizarStatusConexao(boolean conectado) {
         Platform.runLater(() -> {
@@ -192,9 +177,6 @@ public class Main extends Application {
         });
     }
 
-    /**
-     * Atualiza o label de ID na tela principal.
-     */
     public void atualizarID(String id) {
         this.meuID = id;
         if (idLabel != null) {
@@ -202,16 +184,8 @@ public class Main extends Application {
         }
     }
 
-    /**
-     * Inicializa o ID da máquina:
-     * 1. Aguarda a conexão com o servidor ficar pronta
-     * 2. Consulta o servidor usando o IP local
-     * 3. Se não encontrar, gera um novo ID e registra
-     * 4. Atualiza o label na UI
-     */
     private void inicializarID() {
         new Thread(() -> {
-            // Espera a conexão ficar pronta (máx ~15s — inclui probe local + remoto)
             int tentativas = 0;
             while (!conexaoServidor.isConectado() && tentativas < 60) {
                 try { Thread.sleep(250); } catch (InterruptedException e) { break; }
@@ -234,9 +208,6 @@ public class Main extends Application {
         }, "inicializar-id").start();
     }
 
-
-
-    /** Inicia registros independentes para os canais de controle e video na mesma porta relay. */
     private void iniciarRelayHost(String id) {
         if (!registroRelayIniciado.compareAndSet(false, true)) {
             return;
@@ -245,7 +216,6 @@ public class Main extends Application {
         new Thread(() -> manterCanalVideo(id), "relay-host-video").start();
     }
 
-    /** Mantem o canal de comandos registrado e solicita autorizacao antes de aceitar a sessao. */
     private void manterCanalControle(String id) {
         while (!Thread.currentThread().isInterrupted()) {
             Socket canalControle = null;
@@ -274,7 +244,7 @@ public class Main extends Application {
                 enviarRespostaRelay(canalControle, "ACCEPTED");
 
                 DataOutputStream saidaControle = new DataOutputStream(canalControle.getOutputStream());
-                InputReceiver receptor = new InputReceiver(canalControle, saidaControle, new Robot());
+                ReceptorEntrada receptor = new ReceptorEntrada(canalControle, saidaControle, new Robot());
                 receptor.run();
                 receptor.pararRecebimento();
             } catch (Exception e) {
@@ -289,7 +259,6 @@ public class Main extends Application {
         }
     }
 
-    /** Mantem o canal de video isolado e transmite apenas para uma sessao previamente autorizada. */
     private void manterCanalVideo(String id) {
         while (!Thread.currentThread().isInterrupted()) {
             Socket canalVideo = null;
@@ -320,7 +289,7 @@ public class Main extends Application {
                 }
 
                 enviarRespostaRelay(canalVideo, "ACCEPTED");
-                ScreenCaster transmissor = new ScreenCaster(
+                TransmissorTela transmissor = new TransmissorTela(
                         new DataOutputStream(canalVideo.getOutputStream()), new Robot());
                 transmissorTelaAtivo = transmissor;
                 transmissor.run();
@@ -336,7 +305,6 @@ public class Main extends Application {
         }
     }
 
-    /** Abre e registra no backend um socket de baixa latencia para o canal informado. */
     private Socket registrarCanalRelay(String host, int porta, String id, String canal) throws Exception {
         Socket socketCanal = new Socket();
         try {
@@ -364,18 +332,16 @@ public class Main extends Application {
         }
     }
 
-    /** Versão que usa o servidor remoto padrâo (bore). */
     private Socket registrarCanalRelay(String id, String canal) throws Exception {
         return registrarCanalRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, id, canal);
     }
 
-    /** Exibe ao usuario a solicitacao remota e aguarda a decisao da interface grafica. */
     private boolean solicitarAutorizacaoRemota(String idRemoto) throws InterruptedException {
         CountDownLatch confirmacao = new CountDownLatch(1);
         boolean[] autorizado = {false};
         Platform.runLater(() -> {
             try {
-                autorizado[0] = com.sicad.DialogHelper.mostrarDialogoSolicitacaoConexao(idRemoto, 60);
+                autorizado[0] = com.sicad.AuxiliarDialogo.mostrarDialogoSolicitacaoConexao(idRemoto, 60);
             } finally {
                 confirmacao.countDown();
             }
@@ -383,7 +349,6 @@ public class Main extends Application {
         return confirmacao.await(65, TimeUnit.SECONDS) && autorizado[0];
     }
 
-    /** Le uma linha curta do handshake sem consumir bytes binarios posteriores. */
     private String lerLinhaRelay(InputStream entrada) throws Exception {
         ByteArrayOutputStream conteudo = new ByteArrayOutputStream();
         int byteLido;
@@ -396,18 +361,16 @@ public class Main extends Application {
         return conteudo.size() > 0 ? conteudo.toString("UTF-8").trim() : null;
     }
 
-    /** Envia uma resposta textual do host antes de iniciar o fluxo binario do canal. */
     private void enviarRespostaRelay(Socket socketCanal, String resposta) throws Exception {
         OutputStream saida = socketCanal.getOutputStream();
         saida.write((resposta + "\n").getBytes());
         saida.flush();
     }
 
-    /** Encerra os dois sockets e o transmissor quando um canal da sessao ativa termina. */
     private void encerrarSessaoRelay(String identificadorEsperado) {
         Socket controle;
         Socket video;
-        ScreenCaster transmissor;
+        TransmissorTela transmissor;
         synchronized (monitorSessaoRelay) {
             if (identificadorEsperado != null && !identificadorEsperado.equals(identificadorSessaoAceita)) {
                 return;
@@ -427,7 +390,6 @@ public class Main extends Application {
         fecharSocketRelay(video);
     }
 
-    /** Remove somente a referencia pertencente ao ciclo atual de um canal relay. */
     private void limparCanalRelay(String canal, Socket socketCanal) {
         synchronized (monitorSessaoRelay) {
             if ("CONTROLE".equals(canal) && socketRelayControle == socketCanal) {
@@ -439,7 +401,6 @@ public class Main extends Application {
         fecharSocketRelay(socketCanal);
     }
 
-    /** Fecha silenciosamente um socket de registro ou de sessao relay. */
     private void fecharSocketRelay(Socket socketCanal) {
         if (socketCanal == null) {
             return;
@@ -447,11 +408,9 @@ public class Main extends Application {
         try {
             socketCanal.close();
         } catch (Exception e) {
-            // O canal pode ter sido fechado pelo backend ou pelo outro lado da sessao.
         }
     }
 
-    /** Evita reconexoes agressivas quando um canal relay e encerrado. */
     private void aguardarNovaTentativaRelay() {
         try {
             Thread.sleep(3000);
@@ -460,7 +419,7 @@ public class Main extends Application {
         }
     }
 
-    private VBox createSidebar() {
+    private VBox criarBarraLateral() {
         VBox sidebar = new VBox(15);
         sidebar.getStyleClass().add("sidebar");
         sidebar.setPadding(new Insets(20, 0, 20, 0));
@@ -469,7 +428,6 @@ public class Main extends Application {
 
         sidebarButtons.clear();
 
-        // Icons SVG Paths
         String homeIcon = "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z";
         String linkIcon = "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z";
         String starIcon = "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
@@ -477,22 +435,22 @@ public class Main extends Application {
         String settingsIcon = "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z";
 
         sidebar.getChildren().addAll(
-                createSidebarButton("Início", homeIcon, true, () -> exibirDashboard()),
-                createSpacer(),
-                createSidebarButton("Configurações", settingsIcon, false, () -> exibirConfiguracoes())
+                criarBotaoBarraLateral("Início", homeIcon, true, () -> exibirDashboard()),
+                criarEspacador(),
+                criarBotaoBarraLateral("Configurações", settingsIcon, false, () -> exibirConfiguracoes())
         );
 
         return sidebar;
     }
 
-    private Region createSpacer() {
+    private Region criarEspacador() {
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
         HBox.setHgrow(spacer, Priority.ALWAYS);
         return spacer;
     }
 
-    private StackPane createSidebarButton(String tooltipText, String svg, boolean isActive, Runnable onClick) {
+    private StackPane criarBotaoBarraLateral(String tooltipText, String svg, boolean isActive, Runnable onClick) {
         StackPane btn = new StackPane();
         btn.getStyleClass().add("sidebar-btn");
         if (isActive) btn.getStyleClass().add("active");
@@ -500,12 +458,12 @@ public class Main extends Application {
         SVGPath path = new SVGPath();
         path.setContent(svg);
         path.getStyleClass().add("sidebar-icon");
-        
+
         Tooltip tooltip = new Tooltip(tooltipText);
         tooltip.setShowDelay(javafx.util.Duration.millis(200));
         tooltip.setStyle("-fx-font-size: 13px; -fx-background-color: #1E293B; -fx-text-fill: #E2E8F0; -fx-padding: 6px 12px; -fx-background-radius: 4px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 4);");
         Tooltip.install(btn, tooltip);
-        
+
         btn.getChildren().add(path);
         btn.setOnMouseClicked(e -> {
             for (StackPane b : sidebarButtons) {
@@ -520,7 +478,7 @@ public class Main extends Application {
         return btn;
     }
 
-    private HBox createHeader() {
+    private HBox criarCabecalho() {
         HBox header = new HBox(15);
         header.getStyleClass().add("header");
         header.setAlignment(Pos.CENTER_LEFT);
@@ -536,7 +494,6 @@ public class Main extends Application {
         subtitle.getStyleClass().add("subtitle");
         titles.getChildren().addAll(title, subtitle);
 
-        // Theme Selector
         ComboBox<String> themeSelector = new ComboBox<>();
         themeSelector.getItems().addAll("Dark", "Claro", "Azul", "Laranja");
         themeSelector.setValue("Dark");
@@ -550,7 +507,6 @@ public class Main extends Application {
             }
         });
 
-        // Status Indicator
         VBox statusContainer = new VBox(5);
         statusContainer.setAlignment(Pos.CENTER_RIGHT);
 
@@ -581,31 +537,28 @@ public class Main extends Application {
 
         statusContainer.getChildren().addAll(statusBox, btnReconnect);
 
-        header.getChildren().addAll(logo, titles, createSpacer(), themeSelector, statusContainer);
+        header.getChildren().addAll(logo, titles, criarEspacador(), themeSelector, statusContainer);
         return header;
     }
 
-    private VBox createDashboardContent() {
+    private VBox criarConteudoDashboard() {
         VBox content = new VBox(30);
         content.setPadding(new Insets(40, 60, 40, 60));
 
-        // 1. Connection Area (ID and Connect)
         HBox connectionArea = new HBox(40);
         connectionArea.setAlignment(Pos.TOP_CENTER);
-        
-        VBox myIdCard = createMyIdCard();
-        VBox connectCard = createConnectCard();
-        
+
+        VBox myIdCard = criarCartaoMeuId();
+        VBox connectCard = criarCartaoConexao();
+
         HBox.setHgrow(myIdCard, Priority.ALWAYS);
         HBox.setHgrow(connectCard, Priority.ALWAYS);
-        
+
         connectionArea.getChildren().addAll(myIdCard, connectCard);
 
-        // 2. Main Sections HBox (Recents on left, Contacts on right)
         HBox mainSections = new HBox(40);
         mainSections.setAlignment(Pos.TOP_LEFT);
-        
-        // 2a. Recent Sessions Section
+
         VBox recentsSection = new VBox(15);
         Label recentsTitle = new Label("Sessões Recentes");
         recentsTitle.getStyleClass().add("title");
@@ -620,7 +573,7 @@ public class Main extends Application {
         return content;
     }
 
-    private VBox createMyIdCard() {
+    private VBox criarCartaoMeuId() {
         VBox card = new VBox(15);
         card.getStyleClass().add("card");
         card.setAlignment(Pos.CENTER);
@@ -649,8 +602,7 @@ public class Main extends Application {
         return card;
     }
 
-    /** Cria o cartao usado para informar o ID e iniciar uma conexao remota. */
-    private VBox createConnectCard() {
+    private VBox criarCartaoConexao() {
         VBox card = new VBox(15);
         card.getStyleClass().add("card");
         card.setAlignment(Pos.CENTER);
@@ -665,22 +617,22 @@ public class Main extends Application {
 
         idInput.textProperty().addListener((obs, oldText, newText) -> {
             if (newText.equals(oldText)) return;
-            
+
             String plain = newText.toUpperCase().replaceAll("[^A-Z0-9]", "");
             if (plain.length() > 11) {
                 plain = plain.substring(0, 11);
             }
-            
+
             StringBuilder formatted = new StringBuilder(plain);
             if (plain.length() > 8) {
                 formatted.insert(8, "-");
             }
-            
+
             String finalText = formatted.toString();
             if (!newText.equals(finalText)) {
                 javafx.application.Platform.runLater(() -> {
                     idInput.setText(finalText);
-                    idInput.positionCaret(finalText.length()); // Manter cursor no final
+                    idInput.positionCaret(finalText.length());
                 });
             }
         });
@@ -691,7 +643,7 @@ public class Main extends Application {
 
         connectBtn.setOnAction(e -> {
             String targetId = idInput.getText().trim();
-            
+
             if (targetId.isEmpty()) {
                 mostrarAlerta("Erro", "ID inválido", "Por favor, digite um ID válido.", Alert.AlertType.WARNING);
                 return;
@@ -707,9 +659,8 @@ public class Main extends Application {
                 return;
             }
 
-            // Salva no histórico de conexões recentes e atualiza o painel
             GerenciadorHistorico.adicionarConexao(targetId);
-            
+
             Platform.runLater(() -> {
                 atualizarRecentes();
             });
@@ -723,8 +674,7 @@ public class Main extends Application {
                     connectBtn.setText("Conectar");
                 });
 
-                RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
-                // Relay SEMPRE via remoto (bore) para fazer bridge com o host registrado
+                ClienteDesktopRemoto client = new ClienteDesktopRemoto(targetId, idLabel.getText());
                 client.conectarRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, VIDEO_HOST, VIDEO_PORTA);
             }).start();
         });
@@ -735,9 +685,9 @@ public class Main extends Application {
 
     private void mostrarAlerta(String title, String header, String content, Alert.AlertType type) {
         if (type == Alert.AlertType.ERROR || type == Alert.AlertType.WARNING) {
-            com.sicad.DialogHelper.showErrorDialog(header, content);
+            com.sicad.AuxiliarDialogo.mostrarDialogoErro(header, content);
         } else {
-            com.sicad.DialogHelper.showInfoDialog(header, content);
+            com.sicad.AuxiliarDialogo.mostrarDialogoInformativo(header, content);
         }
     }
 
@@ -752,19 +702,19 @@ public class Main extends Application {
             recentsGrid.getChildren().add(noRecents);
         } else {
             for (String id : historico) {
-                recentsGrid.getChildren().add(createRecentCard(id));
+                recentsGrid.getChildren().add(criarCartaoRecente(id));
             }
         }
     }
 
-    private VBox createRecentCard(String id) {
+    private VBox criarCartaoRecente(String id) {
         VBox card = new VBox(8);
         card.getStyleClass().add("session-card");
         card.setPrefWidth(240);
         card.setStyle("-fx-cursor: hand;");
 
         String monitorSvg = "M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z";
-        
+
         SVGPath icon = new SVGPath();
         icon.setContent(monitorSvg);
         icon.setFill(Color.web("#A9B4D0"));
@@ -790,22 +740,19 @@ public class Main extends Application {
         return card;
     }
 
-
-
     private void exibirDashboard() {
         if (centerScrollPane != null) {
-            centerScrollPane.setContent(createDashboardContent());
+            centerScrollPane.setContent(criarConteudoDashboard());
         }
     }
 
     private void exibirConfiguracoes() {
         if (centerScrollPane != null) {
-            centerScrollPane.setContent(createConfiguracoesContent());
+            centerScrollPane.setContent(criarConteudoConfiguracoes());
         }
     }
 
-    /** Cria a tela de configuracoes de rede e dos limites de transmissao remota. */
-    private VBox createConfiguracoesContent() {
+    private VBox criarConteudoConfiguracoes() {
         VBox content = new VBox(25);
         content.setPadding(new Insets(30));
         content.getStyleClass().add("content-area");
@@ -816,7 +763,6 @@ public class Main extends Application {
 
         java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
 
-        // Seção 1: Rede
         VBox redeSection = new VBox(15);
         redeSection.getStyleClass().add("card");
         redeSection.setPadding(new Insets(20));
@@ -880,7 +826,6 @@ public class Main extends Application {
 
         redeSection.getChildren().addAll(redeTitle, redeGrid);
 
-        // Seção 2: Caster Video
         VBox casterSection = new VBox(15);
         casterSection.getStyleClass().add("card");
         casterSection.setPadding(new Insets(20));
@@ -895,7 +840,7 @@ public class Main extends Application {
 
         Label fpsLabel = new Label("Taxa de Quadros Limite (FPS):");
         fpsLabel.getStyleClass().add("text-secondary");
-        
+
         Slider fpsSlider = new Slider(5, 30, Double.parseDouble(props.getProperty("caster.fps", "15")));
         fpsSlider.setShowTickLabels(true);
         fpsSlider.setShowTickMarks(true);
@@ -903,7 +848,7 @@ public class Main extends Application {
         fpsSlider.setMinorTickCount(0);
         fpsSlider.setSnapToTicks(true);
         fpsSlider.setPrefWidth(300);
-        
+
         Label fpsValLabel = new Label(((int) fpsSlider.getValue()) + " FPS");
         fpsValLabel.getStyleClass().add("text-primary");
         fpsValLabel.setStyle("-fx-font-weight: bold;");
@@ -913,14 +858,14 @@ public class Main extends Application {
 
         Label qualityLabel = new Label("Qualidade de Compactação JPEG:");
         qualityLabel.getStyleClass().add("text-secondary");
-        
+
         double currentQuality = Double.parseDouble(props.getProperty("caster.quality", "0.85")) * 100;
         Slider qualitySlider = new Slider(50, 95, Math.min(95, Math.max(50, currentQuality)));
         qualitySlider.setShowTickLabels(true);
         qualitySlider.setShowTickMarks(true);
         qualitySlider.setMajorTickUnit(20);
         qualitySlider.setPrefWidth(300);
-        
+
         Label qualityValLabel = new Label(((int) qualitySlider.getValue()) + "%");
         qualityValLabel.getStyleClass().add("text-primary");
         qualityValLabel.setStyle("-fx-font-weight: bold;");
@@ -931,7 +876,7 @@ public class Main extends Application {
         casterGrid.add(fpsLabel, 0, 0);
         casterGrid.add(fpsSlider, 1, 0);
         casterGrid.add(fpsValLabel, 2, 0);
-        
+
         casterGrid.add(qualityLabel, 0, 1);
         casterGrid.add(qualitySlider, 1, 1);
         casterGrid.add(qualityValLabel, 2, 1);
@@ -979,7 +924,6 @@ public class Main extends Application {
 
         casterSection.getChildren().addAll(casterTitle, casterGrid);
 
-        // Botão Salvar
         HBox buttonBox = new HBox(15);
         buttonBox.setAlignment(Pos.CENTER_LEFT);
 

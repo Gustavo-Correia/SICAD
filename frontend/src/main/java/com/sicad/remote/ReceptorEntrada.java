@@ -7,52 +7,43 @@ import java.io.InputStreamReader;
 import java.io.DataOutputStream;
 import java.net.Socket;
 
-public class InputReceiver implements Runnable {
+public class ReceptorEntrada implements Runnable {
     private final Socket socket;
     private final DataOutputStream dataOut;
     private final Robot robot;
-    private volatile boolean running = true;
-    private ClipboardSync clipboardSync;
+    private volatile boolean emExecucao = true;
+    private SincronizadorAreaTransferencia clipboardSync;
 
-    public InputReceiver(Socket socket, DataOutputStream dataOut, Robot robot) {
+    public ReceptorEntrada(Socket socket, DataOutputStream dataOut, Robot robot) {
         this.socket = socket;
         this.dataOut = dataOut;
         this.robot = robot;
-        this.clipboardSync = new ClipboardSync(null, dataOut, true);
+        this.clipboardSync = new SincronizadorAreaTransferencia(null, dataOut, true);
     }
 
-    public InputReceiver(Socket socket, Robot robot) {
-        this.socket = socket;
-        this.dataOut = null;
-        this.robot = robot;
-        this.clipboardSync = null;
-    }
-
-    /** Interrompe o recebimento de comandos e o monitoramento da area de transferencia. */
     public void pararRecebimento() {
-        this.running = false;
+        this.emExecucao = false;
         if (clipboardSync != null) {
             clipboardSync.stop();
         }
     }
 
-    /** Processa comandos do canal de controle ate a conexao ser encerrada. */
     @Override
     public void run() {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
             String line;
-            while (running && (line = reader.readLine()) != null) {
-                processCommand(line.trim());
+            while (emExecucao && (line = reader.readLine()) != null) {
+                processarComando(line.trim());
             }
         } catch (Exception e) {
-            System.out.println("InputReceiver encerrado: " + e.getMessage());
+            System.out.println("ReceptorEntrada encerrado: " + e.getMessage());
         } finally {
             pararRecebimento();
         }
     }
 
-    private void processCommand(String command) {
-        String[] parts = command.split(":", 2); // Split em 2 partes apenas para preservar o conteúdo do texto do clipboard contendo ':'
+    private void processarComando(String command) {
+        String[] parts = command.split(":", 2);
         if (parts.length == 0) return;
 
         try {
@@ -60,7 +51,7 @@ public class InputReceiver implements Runnable {
                 case "PING_CHECK":
                     if (parts.length >= 2) {
                         long ts = Long.parseLong(parts[1]);
-                        ScreenCaster.enviarPong(dataOut, ts);
+                        TransmissorTela.enviarPong(dataOut, ts);
                     }
                     break;
                 case "CLIPBOARD_SYNC":
@@ -82,13 +73,13 @@ public class InputReceiver implements Runnable {
                 case "MOUSE_PRESS":
                     if (parts.length >= 2) {
                         int button = Integer.parseInt(parts[1]);
-                        robot.mousePress(getMouseButton(button));
+                        robot.mousePress(obterBotaoMouse(button));
                     }
                     break;
                 case "MOUSE_RELEASE":
                     if (parts.length >= 2) {
                         int button = Integer.parseInt(parts[1]);
-                        robot.mouseRelease(getMouseButton(button));
+                        robot.mouseRelease(obterBotaoMouse(button));
                     }
                     break;
                 case "KEY_PRESS":
@@ -109,8 +100,7 @@ public class InputReceiver implements Runnable {
         }
     }
 
-    private int getMouseButton(int buttonId) {
-        // Mapeamento simples (1=Esquerdo, 2=Meio, 3=Direito)
+    private int obterBotaoMouse(int buttonId) {
         switch (buttonId) {
             case 1: return InputEvent.BUTTON1_DOWN_MASK;
             case 2: return InputEvent.BUTTON2_DOWN_MASK;

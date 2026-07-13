@@ -17,14 +17,12 @@ import javafx.stage.StageStyle;
 import javafx.util.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class DialogHelper {
+public class AuxiliarDialogo {
 
-    /** Exibe uma solicitacao de acesso e a recusa automaticamente apos o prazo padrao. */
     public static boolean mostrarDialogoSolicitacaoConexao(String idDispositivo) {
         return mostrarDialogoSolicitacaoConexao(idDispositivo, 60);
     }
 
-    /** Exibe uma solicitacao de acesso e fecha o dialogo quando o prazo informado expira. */
     public static boolean mostrarDialogoSolicitacaoConexao(String idDispositivo, int segundosLimite) {
         AtomicBoolean aceito = new AtomicBoolean(false);
 
@@ -73,8 +71,7 @@ public class DialogHelper {
 
         Scene cena = new Scene(raiz);
         cena.setFill(Color.TRANSPARENT);
-        
-        // Carrega o CSS principal
+
         java.net.URL urlCss = Main.class.getResource("/com/sicad/styles.css");
         if (urlCss != null) {
             cena.getStylesheets().add(urlCss.toExternalForm());
@@ -92,7 +89,7 @@ public class DialogHelper {
         return aceito.get();
     }
 
-    public static void showErrorDialog(String titleStr, String message) {
+    public static void mostrarDialogoErro(String titleStr, String message) {
         Stage dialog = new Stage();
         dialog.initModality(Modality.APPLICATION_MODAL);
         dialog.initStyle(StageStyle.TRANSPARENT);
@@ -123,7 +120,7 @@ public class DialogHelper {
 
         Scene scene = new Scene(root);
         scene.setFill(Color.TRANSPARENT);
-        
+
         java.net.URL cssUrl = Main.class.getResource("/com/sicad/styles.css");
         if (cssUrl != null) {
             scene.getStylesheets().add(cssUrl.toExternalForm());
@@ -134,7 +131,7 @@ public class DialogHelper {
         dialog.showAndWait();
     }
 
-    public static void showInfoDialog(String titleStr, String message) {
+    public static void mostrarDialogoInformativo(String titleStr, String message) {
         Stage dialog = new Stage();
         dialog.initModality(Modality.APPLICATION_MODAL);
         dialog.initStyle(StageStyle.TRANSPARENT);
@@ -165,7 +162,7 @@ public class DialogHelper {
 
         Scene scene = new Scene(root);
         scene.setFill(Color.TRANSPARENT);
-        
+
         java.net.URL cssUrl = Main.class.getResource("/com/sicad/styles.css");
         if (cssUrl != null) {
             scene.getStylesheets().add(cssUrl.toExternalForm());

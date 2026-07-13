@@ -1,6 +1,6 @@
 package com.sicad.socket;
 
-import com.sicad.database.ClientService;
+import com.sicad.database.ServicoCliente;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -10,22 +10,21 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.concurrent.CountDownLatch;
 
-public class ClientHandler implements Runnable {
+public class ManipuladorCliente implements Runnable {
 
     private final Socket socket;
-    private final String clientIp;
-    private volatile boolean closeOnExit = true;
+    private final String ipCliente;
+    private volatile boolean fecharAoSair = true;
 
-    public ClientHandler(Socket socket) {
+    public ManipuladorCliente(Socket socket) {
         this.socket = socket;
         InetSocketAddress remote = (InetSocketAddress) socket.getRemoteSocketAddress();
-        this.clientIp = remote.getAddress().getHostAddress();
+        this.ipCliente = remote.getAddress().getHostAddress();
     }
 
-    /** Identifica o tipo de cliente e encaminha comandos comuns ou conexoes de relay. */
     @Override
     public void run() {
-        System.out.println("Cliente conectado: " + clientIp + ":" + socket.getPort());
+        System.out.println("Cliente conectado: " + ipCliente + ":" + socket.getPort());
 
         try {
             socket.setSoTimeout(10_000);
@@ -36,7 +35,6 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            // Os comandos de relay precisam ser lidos antes de usar um leitor com buffer.
             if (primeiraLinha.startsWith("REGISTRAR_CANAL_RELAY:")) {
                 processarRegistroCanalRelay(primeiraLinha.substring("REGISTRAR_CANAL_RELAY:".length()).trim());
                 return;
@@ -47,17 +45,6 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            if (primeiraLinha.startsWith("REGISTER_RELAY:")) {
-                handleRelayRegister(primeiraLinha.substring(15).trim());
-                return;
-            }
-
-            if (primeiraLinha.startsWith("RELAY_CONNECT:")) {
-                processarConexaoRelay(primeiraLinha.substring(14).trim());
-                return;
-            }
-
-            // Processa os comandos comuns ate o cliente encerrar a conexao.
             try (OutputStream out = socket.getOutputStream()) {
                 String primeiraResposta = processarComando(primeiraLinha, out);
                 if (primeiraResposta != null) {
@@ -74,18 +61,17 @@ public class ClientHandler implements Runnable {
                 }
             }
         } catch (SocketException e) {
-            System.out.println("Cliente desconectado (" + clientIp + "): " + e.getMessage());
+            System.out.println("Cliente desconectado (" + ipCliente + "): " + e.getMessage());
         } catch (Exception e) {
-            System.out.println("Erro (" + clientIp + "): " + e.getMessage());
+            System.out.println("Erro (" + ipCliente + "): " + e.getMessage());
         } finally {
-            if (closeOnExit) {
+            if (fecharAoSair) {
                 fecharSocket();
             }
-            System.out.println("Conexão encerrada: " + clientIp);
+            System.out.println("Conexão encerrada: " + ipCliente);
         }
     }
 
-    /** Le uma linha curta do protocolo e rejeita entradas que possam consumir memoria sem limite. */
     private String lerLinha(InputStream entrada) throws Exception {
         ByteArrayOutputStream conteudo = new ByteArrayOutputStream();
         int byteLido;
@@ -98,19 +84,6 @@ public class ClientHandler implements Runnable {
         return conteudo.size() > 0 ? conteudo.toString("UTF-8").trim() : null;
     }
 
-    private void handleRelayRegister(String relayId) throws Exception {
-        RelayManager.register(relayId, socket);
-        ClientService.registerClient(relayId, clientIp);
-        try {
-            while (!Thread.interrupted() && !socket.isClosed()) {
-                Thread.sleep(1000);
-            }
-        } finally {
-            RelayManager.unregister(relayId);
-        }
-    }
-
-    /** Mantem um canal do host disponivel no relay sem criar IDs artificiais no banco. */
     private void processarRegistroCanalRelay(String parametros) throws Exception {
         String[] partes = parametros.split(":", 2);
         if (partes.length != 2 || partes[0].isBlank() || !canalValido(partes[1])) {
@@ -119,7 +92,7 @@ public class ClientHandler implements Runnable {
 
         String id = partes[0];
         String canal = partes[1];
-        RelayManager.registrarCanal(id, canal, socket);
+        GerenciadorRelay.registrarCanal(id, canal, socket);
         OutputStream saidaConfirmacao = socket.getOutputStream();
         saidaConfirmacao.write("REGISTRO_OK\n".getBytes());
         saidaConfirmacao.flush();
@@ -128,11 +101,10 @@ public class ClientHandler implements Runnable {
                 Thread.sleep(1000);
             }
         } finally {
-            RelayManager.removerCanalSeMesmo(id, canal, socket);
+            GerenciadorRelay.removerCanalSeMesmo(id, canal, socket);
         }
     }
 
-    /** Reserva o canal solicitado e cria uma ponte exclusiva entre cliente visualizador e host. */
     private void processarConexaoCanalRelay(String parametros) throws Exception {
         String[] partes = parametros.split(":", 2);
         if (partes.length != 2 || partes[0].isBlank() || !canalValido(partes[1])) {
@@ -142,7 +114,7 @@ public class ClientHandler implements Runnable {
 
         String idAlvo = partes[0];
         String canal = partes[1];
-        Socket socketAlvo = RelayManager.retirarCanal(idAlvo, canal);
+        Socket socketAlvo = GerenciadorRelay.retirarCanal(idAlvo, canal);
         if (!socketDisponivel(socketAlvo)) {
             if (socketAlvo != null) {
                 fecharSocket(socketAlvo);
@@ -154,38 +126,20 @@ public class ClientHandler implements Runnable {
         criarPonteRelay(socketAlvo, idAlvo + " [" + canal + "]");
     }
 
-    /** Confirma se o nome recebido representa um dos dois canais suportados. */
     private boolean canalValido(String canal) {
         return "CONTROLE".equals(canal) || "VIDEO".equals(canal);
     }
 
-    /** Verifica se um socket reservado ainda pode participar de uma ponte. */
     private boolean socketDisponivel(Socket socketVerificado) {
         return socketVerificado != null && socketVerificado.isConnected() && !socketVerificado.isClosed();
     }
 
-    /** Envia ao cliente uma falha de negociacao antes de iniciar a ponte relay. */
     private void enviarErroRelay(String mensagem) throws Exception {
         OutputStream saidaErro = socket.getOutputStream();
         saidaErro.write(("ERRO:" + mensagem + "\n").getBytes());
         saidaErro.flush();
     }
 
-    /** Autentica e cria uma ponte bidirecional com buffers limitados para a sessao remota. */
-    private void processarConexaoRelay(String idAlvo) throws Exception {
-        Socket socketAlvo = RelayManager.get(idAlvo);
-        if (!socketDisponivel(socketAlvo)) {
-            if (socketAlvo != null) {
-                RelayManager.unregister(idAlvo);
-            }
-            enviarErroRelay("Alvo nao disponivel");
-            return;
-        }
-
-        criarPonteRelay(socketAlvo, idAlvo);
-    }
-
-    /** Encaminha a autenticacao e retransmite os dois sentidos de uma conexao relay. */
     private void criarPonteRelay(Socket socketAlvo, String descricaoAlvo) throws Exception {
         try {
             configurarSocketBaixaLatencia(socket);
@@ -193,18 +147,16 @@ public class ClientHandler implements Runnable {
             socket.setSoTimeout(70_000);
             socketAlvo.setSoTimeout(70_000);
 
-            System.out.println("Criando ponte relay: " + clientIp + " -> " + descricaoAlvo);
+            System.out.println("Criando ponte relay: " + ipCliente + " -> " + descricaoAlvo);
 
             InputStream entradaCliente = socket.getInputStream();
             OutputStream saidaCliente = socket.getOutputStream();
             InputStream entradaAlvo = socketAlvo.getInputStream();
             OutputStream saidaAlvo = socketAlvo.getOutputStream();
 
-            // Envia confirmacao de que a ponte foi iniciada para desbloquear o cliente.
             saidaCliente.write("OK\n".getBytes());
             saidaCliente.flush();
 
-            // Recebe a autenticacao do cliente e a encaminha ao dispositivo alvo.
             String linhaAutenticacao = lerLinha(entradaCliente);
 
             if (linhaAutenticacao == null || !linhaAutenticacao.startsWith("AUTH:")) {
@@ -217,7 +169,6 @@ public class ClientHandler implements Runnable {
             saidaAlvo.write((linhaAutenticacao + "\n").getBytes());
             saidaAlvo.flush();
 
-            // Repassa ao cliente a resposta de aceitacao ou rejeicao recebida do alvo.
             String resposta = lerLinha(entradaAlvo);
 
             if (resposta == null) {
@@ -234,7 +185,7 @@ public class ClientHandler implements Runnable {
 
             socket.setSoTimeout(0);
             socketAlvo.setSoTimeout(0);
-            closeOnExit = false;
+            fecharAoSair = false;
 
             CountDownLatch ponteEncerrada = new CountDownLatch(1);
 
@@ -242,7 +193,6 @@ public class ClientHandler implements Runnable {
                 try {
                     retransmitir(entradaCliente, saidaAlvo);
                 } catch (Exception e) {
-                    // O fechamento de qualquer sentido encerra toda a ponte.
                 } finally {
                     ponteEncerrada.countDown();
                 }
@@ -252,7 +202,6 @@ public class ClientHandler implements Runnable {
                 try {
                     retransmitir(entradaAlvo, saidaCliente);
                 } catch (Exception e) {
-                    // O fechamento de qualquer sentido encerra toda a ponte.
                 } finally {
                     ponteEncerrada.countDown();
                 }
@@ -267,10 +216,9 @@ public class ClientHandler implements Runnable {
             fecharSocket(socketAlvo);
         }
 
-        System.out.println("Ponte encerrada: " + clientIp + " <-> " + descricaoAlvo);
+        System.out.println("Ponte encerrada: " + ipCliente + " <-> " + descricaoAlvo);
     }
 
-    /** Copia bytes diretamente entre sockets em blocos maiores, sem flush redundante por bloco. */
     private void retransmitir(InputStream entrada, OutputStream saida) throws Exception {
         byte[] bloco = new byte[32 * 1024];
         int quantidade;
@@ -279,19 +227,16 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    /** Reduz filas TCP e desativa o atraso de pequenos comandos de controle. */
     private void configurarSocketBaixaLatencia(Socket socketConfigurado) throws SocketException {
         socketConfigurado.setTcpNoDelay(true);
         socketConfigurado.setSendBufferSize(16 * 1024);
         socketConfigurado.setReceiveBufferSize(16 * 1024);
     }
 
-    /** Fecha um socket da ponte sem ocultar a causa original do encerramento. */
     private void fecharSocket(Socket socketFechado) {
         try {
             socketFechado.close();
         } catch (Exception e) {
-            // O outro sentido da ponte pode ter fechado o socket primeiro.
         }
     }
 
@@ -300,7 +245,6 @@ public class ClientHandler implements Runnable {
             return null;
         }
 
-        // PING não precisa de split
         if ("PING".equalsIgnoreCase(linha)) {
             return "PONG";
         }
@@ -315,11 +259,11 @@ public class ClientHandler implements Runnable {
 
         try {
             return switch (comando) {
-                case "REGISTER"     -> handleRegister(parts);
-                case "REGISTER_ID"  -> handleRegisterId(parts);
-                case "GET_ID"       -> handleGetId(parts);
-                case "LOOKUP"       -> handleLookup(parts);
-                case "GET_DEVICE_COUNT" -> handleGetDeviceCount(parts);
+                case "REGISTER"     -> processarRegistro(parts);
+                case "REGISTER_ID"  -> processarRegistroId(parts);
+                case "GET_ID"       -> processarObterId(parts);
+                case "LOOKUP"       -> processarConsulta(parts);
+                case "GET_DEVICE_COUNT" -> processarContagemDispositivos(parts);
                 default             -> "ERRO:Comando desconhecido";
             };
         } catch (Exception e) {
@@ -328,18 +272,16 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    // REGISTER:<id> ou REGISTER:<id>:<ip>
-    private String handleRegister(String[] parts) throws Exception {
+    private String processarRegistro(String[] parts) throws Exception {
         String clientId = parts[1];
-        String ip = (parts.length >= 3 && !parts[2].isBlank()) ? parts[2] : clientIp;
+        String ip = (parts.length >= 3 && !parts[2].isBlank()) ? parts[2] : ipCliente;
 
-        ClientService.registerClient(clientId, ip);
+        ServicoCliente.registrarCliente(clientId, ip);
         System.out.println("Registrado: " + clientId + " -> " + ip);
         return "OK:" + clientId;
     }
 
-    // REGISTER_ID:<ip>:<id>
-    private String handleRegisterId(String[] parts) throws Exception {
+    private String processarRegistroId(String[] parts) throws Exception {
         String regIp = parts[1];
         String regId = parts.length >= 3 ? parts[2] : null;
 
@@ -347,27 +289,25 @@ public class ClientHandler implements Runnable {
             return "ERRO:ID obrigatório";
         }
 
-        ClientService.registerClient(regId, regIp);
+        ServicoCliente.registrarCliente(regId, regIp);
         System.out.println("Registrado: " + regId + " -> " + regIp);
         return "OK";
     }
 
-    // GET_ID:<ip>
-    private String handleGetId(String[] parts) throws Exception {
+    private String processarObterId(String[] parts) throws Exception {
         String queryIp = parts[1];
-        String foundId = ClientService.getClientIdByIp(queryIp);
+        String foundId = ServicoCliente.obterIdClientePorIp(queryIp);
         return foundId != null ? "ID:" + foundId : "NOT_FOUND";
     }
 
-    // LOOKUP:<identificador>
-    private String handleLookup(String[] parts) throws Exception {
+    private String processarConsulta(String[] parts) throws Exception {
         String clientId = parts[1];
-        String storedIp = ClientService.getClientIp(clientId);
+        String storedIp = ServicoCliente.obterIpCliente(clientId);
         return storedIp != null ? "IP:" + storedIp : "NOT_FOUND";
     }
 
-    private String handleGetDeviceCount(String[] parts) throws Exception {
-        int count = ClientService.getDeviceCount();
+    private String processarContagemDispositivos(String[] parts) throws Exception {
+        int count = ServicoCliente.obterContagemDispositivos();
         return "COUNT:" + count;
     }
 
@@ -377,7 +317,6 @@ public class ClientHandler implements Runnable {
                 socket.close();
             }
         } catch (Exception e) {
-            // ignora erros ao fechar
         }
     }
 }
