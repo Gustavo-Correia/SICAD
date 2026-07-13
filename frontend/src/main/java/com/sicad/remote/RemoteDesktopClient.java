@@ -65,6 +65,11 @@ public class RemoteDesktopClient {
 
     /** Abre canais relay separados para impedir que os quadros bloqueiem comandos e respostas de ping. */
     public void conectarRelay(String hostServidor, int portaServidor) {
+        conectarRelay(hostServidor, portaServidor, hostServidor, portaServidor);
+    }
+
+    /** Conecta controle via um host/porta (ex: bore) e video diretamente ao backend para menor latencia. */
+    public void conectarRelay(String hostServidor, int portaServidor, String hostVideo, int portaVideo) {
         new Thread(() -> {
             try {
                 String identificadorSessao = UUID.randomUUID().toString().replace("-", "");
@@ -82,7 +87,13 @@ public class RemoteDesktopClient {
                 }
                 socket.setSoTimeout(0);
 
-                socketVideo = abrirCanalRelay(hostServidor, portaServidor, "VIDEO", 10);
+                try {
+                    socketVideo = abrirCanalRelay(hostVideo, portaVideo, "VIDEO", 5);
+                } catch (Exception e) {
+                    System.out.println("Video direto indisponivel (" + hostVideo + ":" + portaVideo
+                            + "), usando bore como fallback: " + e.getMessage());
+                    socketVideo = abrirCanalRelay(hostServidor, portaServidor, "VIDEO", 10);
+                }
                 socketVideo.setSoTimeout(15_000);
                 PrintWriter saidaVideo = new PrintWriter(socketVideo.getOutputStream(), true);
                 java.io.InputStream entradaVideo = socketVideo.getInputStream();

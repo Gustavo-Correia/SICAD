@@ -44,6 +44,8 @@ public class Main extends Application {
     public static String SERVIDOR_REMOTO_HOST = "bore.pub";
     public static int PORTA_LOCAL = 5001;
     public static int PORTA_REMOTA = 29664;
+    public static String VIDEO_HOST = "localhost";
+    public static int VIDEO_PORTA = 5001;
 
     /**
      * Endereço público do túnel TCP para acesso remoto (porta 25457).
@@ -78,6 +80,8 @@ public class Main extends Application {
             java.util.Properties props = GerenciadorConfiguracoes.carregarConfiguracoes();
             SERVIDOR_REMOTO_HOST = props.getProperty("server.host", "bore.pub");
             PORTA_REMOTA = Integer.parseInt(props.getProperty("server.port", "29664"));
+            VIDEO_HOST = props.getProperty("video.host", "localhost");
+            VIDEO_PORTA = Integer.parseInt(props.getProperty("video.port", "5001"));
             PORTA_LOCAL = Integer.parseInt(props.getProperty("local.port", "5001"));
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());
@@ -291,7 +295,13 @@ public class Main extends Application {
             Socket canalVideo = null;
             String identificadorSessao = null;
             try {
-                canalVideo = registrarCanalRelay(id, "VIDEO");
+                try {
+                    canalVideo = registrarCanalRelay(VIDEO_HOST, VIDEO_PORTA, id, "VIDEO");
+                } catch (Exception e) {
+                    System.out.println("Video direto indisponivel (" + VIDEO_HOST + ":" + VIDEO_PORTA
+                            + "), usando bore como fallback: " + e.getMessage());
+                    canalVideo = registrarCanalRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, id, "VIDEO");
+                }
                 socketRelayVideo = canalVideo;
 
                 String autenticacao = lerLinhaRelay(canalVideo.getInputStream());
@@ -327,14 +337,14 @@ public class Main extends Application {
     }
 
     /** Abre e registra no backend um socket de baixa latencia para o canal informado. */
-    private Socket registrarCanalRelay(String id, String canal) throws Exception {
+    private Socket registrarCanalRelay(String host, int porta, String id, String canal) throws Exception {
         Socket socketCanal = new Socket();
         try {
             socketCanal.setTcpNoDelay(true);
             socketCanal.setKeepAlive(true);
             socketCanal.setSendBufferSize(16 * 1024);
             socketCanal.setReceiveBufferSize(16 * 1024);
-            socketCanal.connect(new java.net.InetSocketAddress(SERVIDOR_REMOTO_HOST, PORTA_REMOTA), 5000);
+            socketCanal.connect(new java.net.InetSocketAddress(host, porta), 5000);
             PrintWriter saidaRegistro = new PrintWriter(socketCanal.getOutputStream(), true);
             saidaRegistro.println("REGISTRAR_CANAL_RELAY:" + id + ":" + canal);
             socketCanal.setSoTimeout(5000);
@@ -346,12 +356,17 @@ public class Main extends Application {
                 throw new IOException("Registro do canal recusado: " + resposta);
             }
             socketCanal.setSoTimeout(0);
-            System.out.println("Canal relay registrado: " + id + " [" + canal + "]");
+            System.out.println("Canal relay registrado: " + id + " [" + canal + "] em " + host + ":" + porta);
             return socketCanal;
         } catch (Exception e) {
             fecharSocketRelay(socketCanal);
             throw e;
         }
+    }
+
+    /** Versão que usa o servidor remoto padrâo (bore). */
+    private Socket registrarCanalRelay(String id, String canal) throws Exception {
+        return registrarCanalRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, id, canal);
     }
 
     /** Exibe ao usuario a solicitacao remota e aguarda a decisao da interface grafica. */
@@ -710,7 +725,7 @@ public class Main extends Application {
 
                 RemoteDesktopClient client = new RemoteDesktopClient(targetId, idLabel.getText());
                 // Relay SEMPRE via remoto (bore) para fazer bridge com o host registrado
-                client.conectarRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA);
+                client.conectarRelay(SERVIDOR_REMOTO_HOST, PORTA_REMOTA, VIDEO_HOST, VIDEO_PORTA);
             }).start();
         });
 
@@ -832,12 +847,30 @@ public class Main extends Application {
         localPortInput.getStyleClass().add("input-modern");
         localPortInput.setPrefWidth(300);
 
+        TextField videoHostInput = new TextField(props.getProperty("video.host", "localhost"));
+        videoHostInput.getStyleClass().add("input-modern");
+        videoHostInput.setPrefWidth(300);
+
+        TextField videoPortInput = new TextField(props.getProperty("video.port", "5001"));
+        videoPortInput.getStyleClass().add("input-modern");
+        videoPortInput.setPrefWidth(300);
+
         redeGrid.add(hostLabel, 0, 0);
         redeGrid.add(hostInput, 1, 0);
         redeGrid.add(portLabel, 0, 1);
         redeGrid.add(portInput, 1, 1);
         redeGrid.add(localPortLabel, 0, 2);
         redeGrid.add(localPortInput, 1, 2);
+
+        Label videoHostLabel = new Label("Host Direto do Vídeo:");
+        videoHostLabel.getStyleClass().add("text-secondary");
+        redeGrid.add(videoHostLabel, 0, 3);
+        redeGrid.add(videoHostInput, 1, 3);
+
+        Label videoPortLabel = new Label("Porta Direta do Vídeo:");
+        videoPortLabel.getStyleClass().add("text-secondary");
+        redeGrid.add(videoPortLabel, 0, 4);
+        redeGrid.add(videoPortInput, 1, 4);
 
         redeSection.getChildren().addAll(redeTitle, redeGrid);
 
@@ -955,24 +988,30 @@ public class Main extends Application {
             try {
                 String host = hostInput.getText().trim();
                 String portStr = portInput.getText().trim();
+                String videoHostStr = videoHostInput.getText().trim();
+                String videoPortStr = videoPortInput.getText().trim();
                 String localPortStr = localPortInput.getText().trim();
                 int fps = (int) fpsSlider.getValue();
                 float quality = (float) (qualitySlider.getValue() / 100.0);
                 int limiteKbps = (int) limiteBandaSlider.getValue();
                 float escala = (float) (resolucaoSlider.getValue() / 100.0);
 
-                if (host.isEmpty() || portStr.isEmpty() || localPortStr.isEmpty()) {
+                if (host.isEmpty() || portStr.isEmpty() || localPortStr.isEmpty()
+                        || videoHostStr.isEmpty() || videoPortStr.isEmpty()) {
                     saveMsg.setText("Erro: Preencha todos os campos.");
                     saveMsg.setStyle("-fx-text-fill: #EF4444;");
                     return;
                 }
 
-                GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr, localPortStr,
+                GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr, videoHostStr, videoPortStr,
+                        localPortStr,
                         String.valueOf(fps), String.valueOf(quality), String.valueOf(limiteKbps),
                         String.valueOf(escala));
 
                 SERVIDOR_REMOTO_HOST = host;
                 PORTA_REMOTA = Integer.parseInt(portStr);
+                VIDEO_HOST = videoHostStr;
+                VIDEO_PORTA = Integer.parseInt(videoPortStr);
                 PORTA_LOCAL = Integer.parseInt(localPortStr);
 
                 saveMsg.setText("Configurações salvas para a próxima sessão!");

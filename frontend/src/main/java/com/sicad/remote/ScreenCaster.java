@@ -17,7 +17,9 @@ import javax.imageio.stream.ImageOutputStream;
 public class ScreenCaster implements Runnable {
     private final DataOutputStream saida;
     private final Robot robo;
+    private final Object monitorQuadro = new Object();
     private volatile boolean emExecucao = true;
+    private BufferedImage quadroPendente;
     private BufferedImage ultimoQuadroEnviado;
     private float qualidadeCompressao = 0.85f;
     private int quadrosPorSegundo = 15;
@@ -26,6 +28,7 @@ public class ScreenCaster implements Runnable {
     private int larguraTelaInformada;
     private int alturaTelaInformada;
 
+    /** Cria o transmissor e carrega os limites de captura e compressao configurados. */
     public ScreenCaster(DataOutputStream saida, Robot robo) {
         this.saida = saida;
         this.robo = robo;
@@ -47,40 +50,83 @@ public class ScreenCaster implements Runnable {
         }
     }
 
+    /** Interrompe a captura e acorda a transmissao caso ela esteja aguardando um quadro. */
     public void pararTransmissao() {
         this.emExecucao = false;
+        synchronized (monitorQuadro) {
+            monitorQuadro.notifyAll();
+        }
     }
 
+    /** Captura a tela na taxa configurada e conserva somente o quadro mais recente. */
     @Override
     public void run() {
         Rectangle areaTela = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
+        Thread tarefaTransmissao = new Thread(this::transmitirQuadros, "transmissao-quadros");
+        tarefaTransmissao.start();
+
+        try {
+            while (emExecucao) {
+                long inicioCaptura = System.nanoTime();
+                BufferedImage captura = robo.createScreenCapture(areaTela);
+
+                synchronized (monitorQuadro) {
+                    quadroPendente = captura;
+                    monitorQuadro.notify();
+                }
+
+                long duracaoMs = (System.nanoTime() - inicioCaptura) / 1_000_000L;
+                long esperaMs = intervaloCapturaMs - duracaoMs;
+                if (esperaMs > 0) {
+                    Thread.sleep(esperaMs);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            if (emExecucao) {
+                System.out.println("Captura de tela encerrada: " + e.getMessage());
+            }
+        } finally {
+            pararTransmissao();
+            try {
+                tarefaTransmissao.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /** Codifica e envia o quadro mais novo disponivel, descartando capturas substituidas. */
+    private void transmitirQuadros() {
         ImageWriter escritor = ImageIO.getImageWritersByFormatName("jpg").next();
         ImageWriteParam parametros = escritor.getDefaultWriteParam();
         parametros.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
 
         try {
             while (emExecucao) {
-                long inicioCiclo = System.nanoTime();
+                BufferedImage captura = aguardarQuadroMaisRecente();
+                if (captura == null) {
+                    continue;
+                }
 
-                BufferedImage captura = robo.createScreenCapture(areaTela);
                 BufferedImage quadroRedimensionado = redimensionarImagem(captura, escalaTransmissao);
-
                 if (quadrosSaoSimilares(quadroRedimensionado, ultimoQuadroEnviado)) {
-                    aguardarIntervalo(inicioCiclo);
                     continue;
                 }
 
                 enviarDimensoesSeAlteradas(captura.getWidth(), captura.getHeight());
-                byte[] dadosImagem = codificarJpeg(escritor, parametros, quadroRedimensionado, qualidadeCompressao);
+                byte[] dadosImagem = codificarJpeg(escritor, parametros, quadroRedimensionado,
+                        qualidadeCompressao);
                 synchronized (saida) {
                     saida.writeInt(dadosImagem.length);
                     saida.write(dadosImagem);
                     saida.flush();
                 }
                 ultimoQuadroEnviado = quadroRedimensionado;
-
-                aguardarIntervalo(inicioCiclo);
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
             if (emExecucao) {
                 System.out.println("Transmissao de tela encerrada: " + e.getMessage());
@@ -91,14 +137,7 @@ public class ScreenCaster implements Runnable {
         }
     }
 
-    private void aguardarIntervalo(long inicioCicloNanos) throws InterruptedException {
-        long duracaoMs = (System.nanoTime() - inicioCicloNanos) / 1_000_000L;
-        long esperaMs = intervaloCapturaMs - duracaoMs;
-        if (esperaMs > 0) {
-            Thread.sleep(esperaMs);
-        }
-    }
-
+    /** Informa ao cliente a resolucao real usada para converter coordenadas do mouse. */
     private void enviarDimensoesSeAlteradas(int largura, int altura) throws Exception {
         if (largura == larguraTelaInformada && altura == alturaTelaInformada) {
             return;
@@ -122,6 +161,7 @@ public class ScreenCaster implements Runnable {
         return fluxoDados.toByteArray();
     }
 
+    /** Envia a resposta do medidor de latencia pelo canal binario de controle. */
     public static void enviarPong(DataOutputStream saida, long instanteOriginal) {
         if (saida == null) {
             return;
@@ -137,6 +177,7 @@ public class ScreenCaster implements Runnable {
         }
     }
 
+    /** Envia o texto da area de transferencia pelo canal binario de controle. */
     public static void enviarClipboard(DataOutputStream saida, String texto) {
         if (saida == null) {
             return;
@@ -151,6 +192,18 @@ public class ScreenCaster implements Runnable {
             }
         } catch (Exception e) {
             System.out.println("Erro ao enviar area de transferencia: " + e.getMessage());
+        }
+    }
+
+    /** Aguarda uma captura e retira atomicamente apenas a versao mais recente. */
+    private BufferedImage aguardarQuadroMaisRecente() throws InterruptedException {
+        synchronized (monitorQuadro) {
+            while (emExecucao && quadroPendente == null) {
+                monitorQuadro.wait();
+            }
+            BufferedImage quadro = quadroPendente;
+            quadroPendente = null;
+            return quadro;
         }
     }
 
@@ -177,6 +230,7 @@ public class ScreenCaster implements Runnable {
         return true;
     }
 
+    /** Reduz a resolucao do quadro antes da codificacao JPEG para limitar o trafego. */
     private BufferedImage redimensionarImagem(BufferedImage original, double escala) {
         int largura = (int) (original.getWidth() * escala);
         int altura = (int) (original.getHeight() * escala);
