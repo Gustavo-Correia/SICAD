@@ -7,7 +7,7 @@ import java.util.Properties;
 
 public class GerenciadorConfiguracoes {
     private static final String FILE_PATH = System.getProperty("user.home") + File.separator + ".sicad_settings.properties";
-    private static final String PORTA_REMOTA_PADRAO = "29664";
+    private static final String PORTA_REMOTA_PADRAO = "38302";
 
     /** Carrega as configuracoes e migra automaticamente a porta remota antiga do projeto. */
     public static Properties carregarConfiguracoes() {
@@ -25,7 +25,8 @@ public class GerenciadorConfiguracoes {
         if (file.exists()) {
             try (FileInputStream in = new FileInputStream(file)) {
                 props.load(in);
-                if ("19664".equals(props.getProperty("server.port"))) {
+                String currentPort = props.getProperty("server.port");
+                if ("19664".equals(currentPort) || "29664".equals(currentPort)) {
                     props.setProperty("server.port", PORTA_REMOTA_PADRAO);
                 }
             } catch (Exception e) {
