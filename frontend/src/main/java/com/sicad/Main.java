@@ -6,10 +6,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.List;
-import java.util.Map;
 
-import com.sun.jna.Native;
-import com.sun.jna.win32.StdCallLibrary;
 
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -26,18 +23,12 @@ import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 
 import com.sicad.remote.ClienteDesktopRemoto;
+import com.sicad.remote.ClienteRemotoUI;
 import com.sicad.remote.TransmissorTela;
 import com.sicad.remote.ReceptorEntrada;
 import java.awt.Robot;
 
-interface Kernel32 extends StdCallLibrary {
-    Kernel32 INSTANCE = Native.load("kernel32", Kernel32.class);
-    boolean AllocConsole();
-}
-
 public class Main extends Application {
-
-    public static final boolean SHOW_CONSOLE = false;
 
     public static String SERVIDOR_HOST = "127.0.0.1";
     public static int SERVIDOR_PORTA = 5000;
@@ -69,18 +60,6 @@ public class Main extends Application {
             SERVIDOR_PORTA = Integer.parseInt(props.getProperty("server.port", "5000"));
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());
-        }
-
-        if (SHOW_CONSOLE) {
-            Kernel32.INSTANCE.AllocConsole();
-            try {
-                FileOutputStream fos = new FileOutputStream("CONOUT$");
-                System.setOut(new PrintStream(fos, true));
-                System.setErr(new PrintStream(fos, true));
-            } catch (Exception e) {
-                System.out.println("Erro ao redirecionar console: " + e.getMessage());
-            }
-            System.out.println("=== SICAD - Console Ativado ===");
         }
 
         root = new BorderPane();
@@ -720,6 +699,8 @@ public class Main extends Application {
                 });
 
                 ClienteDesktopRemoto client = new ClienteDesktopRemoto(targetId, idLabel.getText());
+                ClienteRemotoUI ui = new ClienteRemotoUI(client);
+                client.setListener(ui);
                 client.conectarRelay(SERVIDOR_HOST, SERVIDOR_PORTA);
             }).start();
         });

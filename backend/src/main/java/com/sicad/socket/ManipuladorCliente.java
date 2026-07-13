@@ -48,14 +48,14 @@ public class ManipuladorCliente implements Runnable {
             }
 
             try (OutputStream out = socket.getOutputStream()) {
-                String primeiraResposta = processarComando(primeiraLinha, out);
+                String primeiraResposta = processarComando(primeiraLinha);
                 if (primeiraResposta != null) {
                     out.write((primeiraResposta + "\n").getBytes());
                     out.flush();
                 }
                 String linha;
                 while ((linha = lerLinha(socket.getInputStream())) != null) {
-                    String resposta = processarComando(linha.trim(), out);
+                    String resposta = processarComando(linha.trim());
                     if (resposta != null) {
                         out.write((resposta + "\n").getBytes());
                         out.flush();
@@ -242,7 +242,7 @@ public class ManipuladorCliente implements Runnable {
         }
     }
 
-    private String processarComando(String linha, OutputStream out) {
+    private String processarComando(String linha) {
         if (linha.isEmpty()) {
             return null;
         }
