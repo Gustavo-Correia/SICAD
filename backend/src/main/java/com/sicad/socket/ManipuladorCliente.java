@@ -317,11 +317,13 @@ public class ManipuladorCliente implements Runnable {
     private String processarSalvarConfig(String[] parts) throws Exception {
         String id = parts[1];
         String[] valores = parts[2].split(",");
-        int fps = Integer.parseInt(valores[0]);
-        double qualidade = Double.parseDouble(valores[1]);
-        int limiteKbps = Integer.parseInt(valores[2]);
-        double escala = Double.parseDouble(valores[3]);
-        ServicoConfig.salvarConfig(id, fps, qualidade, limiteKbps, escala);
+        String host = valores[0];
+        int porta = Integer.parseInt(valores[1]);
+        int fps = Integer.parseInt(valores[2]);
+        double qualidade = Double.parseDouble(valores[3]);
+        int limiteKbps = Integer.parseInt(valores[4]);
+        double escala = Double.parseDouble(valores[5]);
+        ServicoConfig.salvarConfig(id, host, porta, fps, qualidade, limiteKbps, escala);
         return "CONFIG_OK";
     }
 
