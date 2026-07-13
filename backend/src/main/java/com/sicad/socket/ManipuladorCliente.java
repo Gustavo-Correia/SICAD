@@ -1,6 +1,7 @@
 package com.sicad.socket;
 
 import com.sicad.database.ServicoCliente;
+import com.sicad.database.ServicoConfig;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -264,6 +265,8 @@ public class ManipuladorCliente implements Runnable {
                 case "GET_ID"       -> processarObterId(parts);
                 case "LOOKUP"       -> processarConsulta(parts);
                 case "GET_DEVICE_COUNT" -> processarContagemDispositivos(parts);
+                case "SAVE_CONFIG"  -> processarSalvarConfig(parts);
+                case "LOAD_CONFIG"  -> processarCarregarConfig(parts);
                 default             -> "ERRO:Comando desconhecido";
             };
         } catch (Exception e) {
@@ -309,6 +312,26 @@ public class ManipuladorCliente implements Runnable {
     private String processarContagemDispositivos(String[] parts) throws Exception {
         int count = ServicoCliente.obterContagemDispositivos();
         return "COUNT:" + count;
+    }
+
+    private String processarSalvarConfig(String[] parts) throws Exception {
+        String id = parts[1];
+        String[] valores = parts[2].split(",");
+        int fps = Integer.parseInt(valores[0]);
+        double qualidade = Double.parseDouble(valores[1]);
+        int limiteKbps = Integer.parseInt(valores[2]);
+        double escala = Double.parseDouble(valores[3]);
+        ServicoConfig.salvarConfig(id, fps, qualidade, limiteKbps, escala);
+        return "CONFIG_OK";
+    }
+
+    private String processarCarregarConfig(String[] parts) throws Exception {
+        String id = parts[1];
+        String[] config = ServicoConfig.carregarConfig(id);
+        if (config == null) {
+            return "CONFIG_NOT_FOUND";
+        }
+        return "CONFIG:" + String.join(",", config);
     }
 
     private void fecharSocket() {

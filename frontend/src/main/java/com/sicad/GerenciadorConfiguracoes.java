@@ -28,11 +28,25 @@ public class GerenciadorConfiguracoes {
         return props;
     }
 
-    public static void salvarConfiguracoes(String host, String porta,
-            String fps, String qualidade, String limiteKbps, String escala) {
-        Properties props = carregarConfiguracoes();
+    public static void salvarConfiguracoesRede(String host, String porta) {
+        Properties props = new Properties();
         props.setProperty("server.host", host);
         props.setProperty("server.port", porta);
+
+        props.setProperty("caster.fps", "15");
+        props.setProperty("caster.quality", "0.85");
+        props.setProperty("caster.maxKbps", "5000");
+        props.setProperty("caster.scale", "0.85");
+
+        try (FileOutputStream out = new FileOutputStream(FILE_PATH)) {
+            props.store(out, "Configuracoes SICAD");
+        } catch (Exception e) {
+            System.out.println("Erro ao salvar configurações: " + e.getMessage());
+        }
+    }
+
+    public static void salvarCasterSettingsNoArquivo(String fps, String qualidade, String limiteKbps, String escala) {
+        Properties props = carregarConfiguracoes();
         props.setProperty("caster.fps", fps);
         props.setProperty("caster.quality", qualidade);
         props.setProperty("caster.maxKbps", limiteKbps);
@@ -43,6 +57,10 @@ public class GerenciadorConfiguracoes {
         } catch (Exception e) {
             System.out.println("Erro ao salvar configurações: " + e.getMessage());
         }
+    }
+
+    public static void carregarCasterSettingsDoServidor(String fps, String qualidade, String limiteKbps, String escala) {
+        salvarCasterSettingsNoArquivo(fps, qualidade, limiteKbps, escala);
     }
 
     public static String obterIdSalvo() {

@@ -194,12 +194,30 @@ public class Main extends Application {
             GerenciadorID gerenciador = new GerenciadorID(conexaoServidor);
             String id = gerenciador.obterOuCriarID();
 
+            carregarConfigServidor(id);
+
             Platform.runLater(() -> {
                 atualizarID(id);
             });
 
             iniciarRelayHost(id);
         }, "inicializar-id").start();
+    }
+
+    private void carregarConfigServidor(String id) {
+        try {
+            String resposta = conexaoServidor.enviarComando("LOAD_CONFIG:" + id);
+            if (resposta != null && resposta.startsWith("CONFIG:")) {
+                String[] valores = resposta.substring(7).split(",");
+                if (valores.length == 4) {
+                    GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
+                            valores[0], valores[1], valores[2], valores[3]);
+                    System.out.println("Configuracoes carregadas do servidor para " + id);
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Erro ao carregar config do servidor: " + e.getMessage());
+        }
     }
 
     private void iniciarRelayHost(String id) {
@@ -803,7 +821,7 @@ public class Main extends Application {
         Label fpsLabel = new Label("Taxa de Quadros Limite (FPS):");
         fpsLabel.getStyleClass().add("text-secondary");
 
-        Slider fpsSlider = new Slider(5, 30, Double.parseDouble(props.getProperty("caster.fps", "15")));
+        Slider fpsSlider = new Slider(5, 60, Double.parseDouble(props.getProperty("caster.fps", "15")));
         fpsSlider.setShowTickLabels(true);
         fpsSlider.setShowTickMarks(true);
         fpsSlider.setMajorTickUnit(5);
@@ -911,12 +929,24 @@ public class Main extends Application {
                     return;
                 }
 
-                GerenciadorConfiguracoes.salvarConfiguracoes(host, portStr,
-                        String.valueOf(fps), String.valueOf(quality), String.valueOf(limiteKbps),
-                        String.valueOf(escala));
+                GerenciadorConfiguracoes.salvarConfiguracoesRede(host, portStr);
 
                 SERVIDOR_HOST = host;
                 SERVIDOR_PORTA = Integer.parseInt(portStr);
+
+                if (conexaoServidor != null && conexaoServidor.isConectado() && meuID != null) {
+                    String configStr = fps + "," + quality + "," + limiteKbps + "," + escala;
+                    new Thread(() -> {
+                        try {
+                            conexaoServidor.enviarComando("SAVE_CONFIG:" + meuID + ":" + configStr);
+                        } catch (Exception ex) {
+                            System.out.println("Erro ao salvar config no servidor: " + ex.getMessage());
+                        }
+                    }, "salvar-config-servidor").start();
+                }
+                GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
+                        String.valueOf(fps), String.valueOf(quality),
+                        String.valueOf(limiteKbps), String.valueOf(escala));
 
                 saveMsg.setText("Configurações salvas para a próxima sessão!");
                 saveMsg.setStyle("-fx-text-fill: #10B981;");
