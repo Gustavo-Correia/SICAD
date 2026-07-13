@@ -35,6 +35,9 @@ services:
       - postgres
       - redis
     env_file: .env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
     networks:
       - sicad_network
 
@@ -48,6 +51,9 @@ services:
       - postgres
       - redis
     env_file: .env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
     networks:
       - sicad_network
 
