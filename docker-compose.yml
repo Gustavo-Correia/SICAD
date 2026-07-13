@@ -38,6 +38,8 @@ services:
     environment:
       DB_HOST: postgres
       REDIS_HOST: redis
+    ports:
+      - "5001:5000"
     networks:
       - sicad_network
 
