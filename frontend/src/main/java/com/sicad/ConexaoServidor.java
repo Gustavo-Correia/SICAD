@@ -42,7 +42,7 @@ public class ConexaoServidor {
      * Tenta conectar no servidor local primeiro (mesma máquina que roda o Docker).
      * Se falhar, tenta o endereço remoto (bore tunnel).
      */
-    public void conectarComFallback(String localHost, int localPort, String remoteHost, int remotePort) {
+    public void ConectarServidor(String localHost, int localPort, String remoteHost, int remotePort) {
         new Thread(() -> {
             Socket sock = null;
 

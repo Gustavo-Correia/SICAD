@@ -103,7 +103,7 @@ public class Main extends Application {
 
         this.conexaoServidor = new ConexaoServidor(this);
 
-        this.conexaoServidor.conectarComFallback(
+        this.conexaoServidor.ConectarServidor(
                 SERVIDOR_HOST, SERVIDOR_PORTA,
                 SERVIDOR_HOST, SERVIDOR_PORTA
         );
@@ -544,7 +544,7 @@ public class Main extends Application {
             btnReconnect.setDisable(true);
             btnReconnect.setText("Conectando...");
             new Thread(() -> {
-                conexaoServidor.conectarComFallback(
+                conexaoServidor.ConectarServidor(
                         SERVIDOR_HOST, SERVIDOR_PORTA,
                         SERVIDOR_HOST, SERVIDOR_PORTA
                 );
