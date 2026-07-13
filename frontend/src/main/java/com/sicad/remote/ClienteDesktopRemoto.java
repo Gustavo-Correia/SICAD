@@ -2,9 +2,11 @@ package com.sicad.remote;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.util.Base64;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
@@ -523,20 +525,53 @@ public class ClienteDesktopRemoto {
             if (db.hasFiles()) {
                 success = true;
                 List<File> files = db.getFiles();
-                for (File file : files) {
-                    System.out.println("[Drag & Drop] Transferência solicitada: " + file.getAbsolutePath());
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                        alert.setTitle("Transferência de Arquivos");
-                        alert.setHeaderText("Simulação de Envio de Arquivo");
-                        alert.setContentText("Arquivo detectado: " + file.getName() + " (" + (file.length() / 1024) + " KB).\n\n"
-                                + "A arquitetura de canal TCP paralelo exclusivo para stream de dados está totalmente especificada!");
-                        alert.show();
-                    });
-                }
+                new Thread(() -> {
+                    for (File file : files) {
+                        enviarArquivo(file);
+                    }
+                }, "envio-arquivo").start();
             }
             event.setDropCompleted(success);
             event.consume();
+        });
+    }
+
+    private void enviarArquivo(File arquivo) {
+        if (out == null || !emExecucao) return;
+
+        String nome = arquivo.getName();
+        long tamanho = arquivo.length();
+        System.out.println("[Arquivo] Enviando: " + nome + " (" + tamanho + " bytes)");
+
+        enviarComando("FILE_START:" + nome + ":" + tamanho);
+
+        int chunkSize = 3 * 1024;
+        byte[] buffer = new byte[chunkSize];
+        long totalEnviado = 0;
+
+        try (FileInputStream fis = new FileInputStream(arquivo)) {
+            int lidos;
+            while ((lidos = fis.read(buffer)) > 0 && emExecucao) {
+                byte[] dados = lidos == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, lidos);
+                String encoded = Base64.getEncoder().encodeToString(dados);
+                enviarComando("FILE_DATA:" + encoded);
+                totalEnviado += lidos;
+            }
+        } catch (Exception e) {
+            System.out.println("[Arquivo] Erro ao enviar: " + e.getMessage());
+            return;
+        }
+
+        enviarComando("FILE_END");
+        long totalFinal = totalEnviado;
+        System.out.println("[Arquivo] Enviado: " + nome + " (" + totalFinal + " bytes)");
+
+        Platform.runLater(() -> {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("Transferência Concluída");
+            alert.setHeaderText("Arquivo enviado com sucesso!");
+            alert.setContentText(nome + " (" + (totalFinal / 1024) + " KB) foi enviado para o dispositivo remoto.");
+            alert.show();
         });
     }
 
