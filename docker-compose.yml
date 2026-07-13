@@ -76,7 +76,7 @@ services:
   bore:
     image: ekzhang/bore:latest
     container_name: sicad_bore
-    command: "local --local-host nginx --to bore.pub -p 29664 8080"
+    command: "local 8080 --local-host nginx --to bore.pub --port 29664"
     restart: always
     depends_on:
       - nginx
