@@ -16,8 +16,8 @@ public class GerenciadorConfiguracoes {
         props.setProperty("server.host", "bore.pub");
         props.setProperty("server.port", PORTA_REMOTA_PADRAO);
         props.setProperty("video.host", "bore.pub");
-        props.setProperty("video.port", "29665");
-        props.setProperty("local.port", "5001");
+        props.setProperty("video.port", "29664");
+        props.setProperty("local.port", "8080");
         props.setProperty("caster.fps", "15");
         props.setProperty("caster.quality", "0.85");
         props.setProperty("caster.maxKbps", "5000");

@@ -40,10 +40,10 @@ public class Main extends Application {
     public static final boolean SHOW_CONSOLE = false;
 
     public static String SERVIDOR_REMOTO_HOST = "bore.pub";
-    public static int PORTA_LOCAL = 5001;
+    public static int PORTA_LOCAL = 8080;
     public static int PORTA_REMOTA = 29664;
     public static String VIDEO_HOST = "bore.pub";
-    public static int VIDEO_PORTA = 29665;
+    public static int VIDEO_PORTA = 29664;
 
     private BorderPane root;
     private ConexaoServidor conexaoServidor;
@@ -71,8 +71,8 @@ public class Main extends Application {
             SERVIDOR_REMOTO_HOST = props.getProperty("server.host", "bore.pub");
             PORTA_REMOTA = Integer.parseInt(props.getProperty("server.port", "29664"));
             VIDEO_HOST = props.getProperty("video.host", "bore.pub");
-            VIDEO_PORTA = Integer.parseInt(props.getProperty("video.port", "29665"));
-            PORTA_LOCAL = Integer.parseInt(props.getProperty("local.port", "5001"));
+            VIDEO_PORTA = Integer.parseInt(props.getProperty("video.port", "29664"));
+            PORTA_LOCAL = Integer.parseInt(props.getProperty("local.port", "8080"));
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());
         }
