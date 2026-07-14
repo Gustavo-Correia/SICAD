@@ -1,7 +1,7 @@
 package com.sicad.socket;
 
 import com.sicad.database.ServicoCliente;
-import com.sicad.database.ServicoConfig;
+import com.sicad.database.ServicoHistorico;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -47,14 +47,14 @@ public class ManipuladorCliente implements Runnable {
             }
 
             try (OutputStream out = socket.getOutputStream()) {
-                String primeiraResposta = processarComando(primeiraLinha, out);
+                String primeiraResposta = processarComando(primeiraLinha);
                 if (primeiraResposta != null) {
                     out.write((primeiraResposta + "\n").getBytes());
                     out.flush();
                 }
                 String linha;
                 while ((linha = lerLinha(socket.getInputStream())) != null) {
-                    String resposta = processarComando(linha.trim(), out);
+                    String resposta = processarComando(linha.trim());
                     if (resposta != null) {
                         out.write((resposta + "\n").getBytes());
                         out.flush();
@@ -102,7 +102,7 @@ public class ManipuladorCliente implements Runnable {
                 Thread.sleep(1000);
             }
         } finally {
-            GerenciadorRelay.removerCanalSeMesmo(id, canal, socket);
+            GerenciadorRelay.removerCanal(id, canal, socket);
         }
     }
 
@@ -241,7 +241,7 @@ public class ManipuladorCliente implements Runnable {
         }
     }
 
-    private String processarComando(String linha, OutputStream out) {
+    private String processarComando(String linha) {
         if (linha.isEmpty()) {
             return null;
         }
@@ -265,8 +265,8 @@ public class ManipuladorCliente implements Runnable {
                 case "GET_ID"       -> processarObterId(parts);
                 case "LOOKUP"       -> processarConsulta(parts);
                 case "GET_DEVICE_COUNT" -> processarContagemDispositivos(parts);
-                case "SAVE_CONFIG"  -> processarSalvarConfig(parts);
-                case "LOAD_CONFIG"  -> processarCarregarConfig(parts);
+                case "ADD_HISTORY"  -> processarAdicionarHistorico(parts);
+                case "LOAD_HISTORY" -> processarCarregarHistorico(parts);
                 default             -> "ERRO:Comando desconhecido";
             };
         } catch (Exception e) {
@@ -314,24 +314,16 @@ public class ManipuladorCliente implements Runnable {
         return "COUNT:" + count;
     }
 
-    private String processarSalvarConfig(String[] parts) throws Exception {
-        String id = parts[1];
-        String[] valores = parts[2].split(",");
-        int fps = Integer.parseInt(valores[0]);
-        double qualidade = Double.parseDouble(valores[1]);
-        int limiteKbps = Integer.parseInt(valores[2]);
-        double escala = Double.parseDouble(valores[3]);
-        ServicoConfig.salvarConfig(id, fps, qualidade, limiteKbps, escala);
-        return "CONFIG_OK";
+    private String processarAdicionarHistorico(String[] parts) throws Exception {
+        if (parts.length < 3 || parts[1].isBlank() || parts[2].isBlank()) {
+            return "ERRO:Usuário e destino obrigatórios";
+        }
+        ServicoHistorico.adicionarConexao(parts[1], parts[2]);
+        return "HISTORY_OK";
     }
 
-    private String processarCarregarConfig(String[] parts) throws Exception {
-        String id = parts[1];
-        String[] config = ServicoConfig.carregarConfig(id);
-        if (config == null) {
-            return "CONFIG_NOT_FOUND";
-        }
-        return "CONFIG:" + String.join(",", config);
+    private String processarCarregarHistorico(String[] parts) throws Exception {
+        return "HISTORY:" + String.join(",", ServicoHistorico.carregarHistorico(parts[1]));
     }
 
     private void fecharSocket() {

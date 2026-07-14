@@ -6,10 +6,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.List;
-import java.util.Map;
 
-import com.sun.jna.Native;
-import com.sun.jna.win32.StdCallLibrary;
 
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -26,18 +23,12 @@ import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 
 import com.sicad.remote.ClienteDesktopRemoto;
+import com.sicad.remote.ClienteRemotoUI;
 import com.sicad.remote.TransmissorTela;
 import com.sicad.remote.ReceptorEntrada;
 import java.awt.Robot;
 
-interface Kernel32 extends StdCallLibrary {
-    Kernel32 INSTANCE = Native.load("kernel32", Kernel32.class);
-    boolean AllocConsole();
-}
-
 public class Main extends Application {
-
-    public static final boolean SHOW_CONSOLE = false;
 
     public static String SERVIDOR_HOST = "127.0.0.1";
     public static int SERVIDOR_PORTA = 5000;
@@ -69,18 +60,6 @@ public class Main extends Application {
             SERVIDOR_PORTA = Integer.parseInt(props.getProperty("server.port", "5000"));
         } catch (Exception e) {
             System.out.println("Erro ao carregar configurações salvas: " + e.getMessage());
-        }
-
-        if (SHOW_CONSOLE) {
-            Kernel32.INSTANCE.AllocConsole();
-            try {
-                FileOutputStream fos = new FileOutputStream("CONOUT$");
-                System.setOut(new PrintStream(fos, true));
-                System.setErr(new PrintStream(fos, true));
-            } catch (Exception e) {
-                System.out.println("Erro ao redirecionar console: " + e.getMessage());
-            }
-            System.out.println("=== SICAD - Console Ativado ===");
         }
 
         root = new BorderPane();
@@ -124,7 +103,7 @@ public class Main extends Application {
 
         this.conexaoServidor = new ConexaoServidor(this);
 
-        this.conexaoServidor.conectarComFallback(
+        this.conexaoServidor.ConectarServidor(
                 SERVIDOR_HOST, SERVIDOR_PORTA,
                 SERVIDOR_HOST, SERVIDOR_PORTA
         );
@@ -194,7 +173,7 @@ public class Main extends Application {
             GerenciadorID gerenciador = new GerenciadorID(conexaoServidor);
             String id = gerenciador.obterOuCriarID();
 
-            carregarConfigServidor(id);
+            carregarHistoricoServidor(id);
 
             Platform.runLater(() -> {
                 atualizarID(id);
@@ -204,19 +183,19 @@ public class Main extends Application {
         }, "inicializar-id").start();
     }
 
-    private void carregarConfigServidor(String id) {
+    private void carregarHistoricoServidor(String id) {
         try {
-            String resposta = conexaoServidor.enviarComando("LOAD_CONFIG:" + id);
-            if (resposta != null && resposta.startsWith("CONFIG:")) {
-                String[] valores = resposta.substring(7).split(",");
-                if (valores.length == 4) {
-                    GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
-                            valores[0], valores[1], valores[2], valores[3]);
-                    System.out.println("Configuracoes carregadas do servidor para " + id);
-                }
+            String resposta = conexaoServidor.enviarComando("LOAD_HISTORY:" + id);
+            if (resposta != null && resposta.startsWith("HISTORY:")) {
+                String conteudo = resposta.substring(8);
+                List<String> ids = conteudo.isBlank()
+                        ? List.of()
+                        : java.util.Arrays.asList(conteudo.split(","));
+                GerenciadorHistorico.substituirHistorico(ids);
+                Platform.runLater(this::atualizarRecentes);
             }
         } catch (Exception e) {
-            System.out.println("Erro ao carregar config do servidor: " + e.getMessage());
+            System.out.println("Erro ao carregar historico do servidor: " + e.getMessage());
         }
     }
 
@@ -539,7 +518,7 @@ public class Main extends Application {
             btnReconnect.setDisable(true);
             btnReconnect.setText("Conectando...");
             new Thread(() -> {
-                conexaoServidor.conectarComFallback(
+                conexaoServidor.ConectarServidor(
                         SERVIDOR_HOST, SERVIDOR_PORTA,
                         SERVIDOR_HOST, SERVIDOR_PORTA
                 );
@@ -672,6 +651,13 @@ public class Main extends Application {
             }
 
             GerenciadorHistorico.adicionarConexao(targetId);
+            new Thread(() -> {
+                String resposta = conexaoServidor.enviarComando(
+                        "ADD_HISTORY:" + meuID + ":" + targetId);
+                if (!"HISTORY_OK".equals(resposta)) {
+                    System.out.println("Erro ao salvar historico no servidor: " + resposta);
+                }
+            }, "salvar-historico-servidor").start();
 
             Platform.runLater(() -> {
                 atualizarRecentes();
@@ -687,6 +673,8 @@ public class Main extends Application {
                 });
 
                 ClienteDesktopRemoto client = new ClienteDesktopRemoto(targetId, idLabel.getText());
+                ClienteRemotoUI ui = new ClienteRemotoUI(client);
+                client.setListener(ui);
                 client.conectarRelay(SERVIDOR_HOST, SERVIDOR_PORTA);
             }).start();
         });
@@ -929,26 +917,12 @@ public class Main extends Application {
                     return;
                 }
 
-                GerenciadorConfiguracoes.salvarConfiguracoesRede(host, portStr);
-
+                int porta = Integer.parseInt(portStr);
                 SERVIDOR_HOST = host;
-                SERVIDOR_PORTA = Integer.parseInt(portStr);
-
-                if (conexaoServidor != null && conexaoServidor.isConectado() && meuID != null) {
-                    String configStr = fps + "," + quality + "," + limiteKbps + "," + escala;
-                    new Thread(() -> {
-                        try {
-                            conexaoServidor.enviarComando("SAVE_CONFIG:" + meuID + ":" + configStr);
-                        } catch (Exception ex) {
-                            System.out.println("Erro ao salvar config no servidor: " + ex.getMessage());
-                        }
-                    }, "salvar-config-servidor").start();
-                }
-                GerenciadorConfiguracoes.carregarCasterSettingsDoServidor(
-                        String.valueOf(fps), String.valueOf(quality),
-                        String.valueOf(limiteKbps), String.valueOf(escala));
-
-                saveMsg.setText("Configurações salvas para a próxima sessão!");
+                SERVIDOR_PORTA = porta;
+                GerenciadorConfiguracoes.aplicarConfiguracoes(
+                        host, porta, fps, quality, limiteKbps, escala);
+                saveMsg.setText("Configurações salvas!");
                 saveMsg.setStyle("-fx-text-fill: #10B981;");
             } catch (Exception ex) {
                 saveMsg.setText("Erro ao salvar: " + ex.getMessage());

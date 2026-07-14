@@ -19,10 +19,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AuxiliarDialogo {
 
-    public static boolean mostrarDialogoSolicitacaoConexao(String idDispositivo) {
-        return mostrarDialogoSolicitacaoConexao(idDispositivo, 60);
-    }
-
     public static boolean mostrarDialogoSolicitacaoConexao(String idDispositivo, int segundosLimite) {
         AtomicBoolean aceito = new AtomicBoolean(false);
 

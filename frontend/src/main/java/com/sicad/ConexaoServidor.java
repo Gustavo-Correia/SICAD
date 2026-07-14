@@ -20,7 +20,6 @@ public class ConexaoServidor {
     private BufferedReader in;
     private OutputStream out;
     private volatile boolean conectado = false;
-    private volatile boolean conexaoLocal = false;
 
     private ScheduledExecutorService heartbeatScheduler;
     private ScheduledFuture<?> heartbeatTask;
@@ -39,52 +38,11 @@ public class ConexaoServidor {
         return conectado;
     }
 
-    public boolean isConexaoLocal() {
-        return conexaoLocal;
-    }
-
-    public void conectarServidor(String host, int porta) {
-        new Thread(() -> {
-            try {
-                this.socket = new Socket(host, porta);
-                this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                this.out = socket.getOutputStream();
-                this.conectado = true;
-
-                System.out.println("Conectado com sucesso ao servidor TCP!");
-                Platform.runLater(() -> mainApp.atualizarStatusConexao(true));
-
-                iniciarHeartbeat();
-
-                // Loop de leitura — roda até o servidor fechar a conexão
-                String linha;
-                while (conectado && (linha = in.readLine()) != null) {
-                    String mensagem = linha.trim();
-
-                    if ("PONG".equals(mensagem)) {
-                        // Resposta do heartbeat, não precisa processar
-                        continue;
-                    }
-
-                    // Coloca na fila para quem está esperando resposta de comando
-                    respostas.put(mensagem);
-                }
-
-                System.out.println("Conexão com o servidor foi encerrada.");
-
-            } catch (Exception e) {
-                System.out.println("Erro na conexão TCP: " + e.getMessage());
-            } finally {
-                desconectarServidor();
-            }
-        }, "conexao-servidor").start();
-    }
-
     /**
      * Tenta conectar no servidor local primeiro (mesma máquina que roda o Docker).
      * Se falhar, tenta o endereço remoto (bore tunnel).
      */
-    public void conectarComFallback(String localHost, int localPort, String remoteHost, int remotePort) {
+    public void ConectarServidor(String localHost, int localPort, String remoteHost, int remotePort) {
         new Thread(() -> {
             Socket sock = null;
 
@@ -93,14 +51,12 @@ public class ConexaoServidor {
                 System.out.println("Tentando conexão local: " + localHost + ":" + localPort);
                 sock = new Socket();
                 sock.connect(new java.net.InetSocketAddress(localHost, localPort), 2000);
-                conexaoLocal = true;
                 System.out.println("Conexão LOCAL estabelecida!");
             } catch (Exception e) {
                 System.out.println("Local indisponível, tentando remoto: " + remoteHost + ":" + remotePort);
                 try {
                     sock = new Socket();
                     sock.connect(new java.net.InetSocketAddress(remoteHost, remotePort), 5000);
-                    conexaoLocal = false;
                     System.out.println("Conexão REMOTA estabelecida!");
                 } catch (Exception e2) {
                     System.out.println("Erro na conexão TCP (remoto): " + e2.getMessage());

@@ -29,10 +29,4 @@ public class ConexaoRedis {
     public static Jedis getConnection() {
         return pool.getResource();
     }
-
-    public static void close() {
-        if (pool != null && !pool.isClosed()) {
-            pool.close();
-        }
-    }
 }
