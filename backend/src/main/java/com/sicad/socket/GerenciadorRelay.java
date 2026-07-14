@@ -8,10 +8,15 @@ public class GerenciadorRelay {
 
     public static void registrarCanal(String id, String canal, Socket socket) {
         String chave = criarChaveCanal(id, canal);
-        Socket anterior = canais.put(chave, socket);
-        if (anterior != null && anterior != socket) {
-            fecharSocket(anterior);
+
+        Socket socketAntigo = canais.get(chave);
+
+        if (socketAntigo != null && socketAntigo != socket) {
+            fecharSocket(socketAntigo);
         }
+
+        canais.put(chave, socket);
+
         System.out.println("Canal relay registrado: " + id + " [" + canal + "]");
     }
 
@@ -19,7 +24,7 @@ public class GerenciadorRelay {
         return canais.remove(criarChaveCanal(id, canal));
     }
 
-    public static void removerCanalSeMesmo(String id, String canal, Socket socketEsperado) {
+    public static void removerCanal(String id, String canal, Socket socketEsperado) {
         canais.remove(criarChaveCanal(id, canal), socketEsperado);
     }
 

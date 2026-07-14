@@ -102,7 +102,7 @@ public class ManipuladorCliente implements Runnable {
                 Thread.sleep(1000);
             }
         } finally {
-            GerenciadorRelay.removerCanalSeMesmo(id, canal, socket);
+            GerenciadorRelay.removerCanal(id, canal, socket);
         }
     }
 
