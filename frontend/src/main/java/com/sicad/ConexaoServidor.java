@@ -38,10 +38,7 @@ public class ConexaoServidor {
         return conectado;
     }
 
-    /**
-     * Tenta conectar no servidor local primeiro (mesma máquina que roda o Docker).
-     * Se falhar, tenta o endereço remoto (bore tunnel).
-     */
+
     public void ConectarServidor(String localHost, int localPort, String remoteHost, int remotePort) {
         new Thread(() -> {
             Socket sock = null;
@@ -93,10 +90,7 @@ public class ConexaoServidor {
         }, "conexao-servidor").start();
     }
 
-    /**
-     * Envia um comando e aguarda a resposta do servidor.
-     * Thread-safe: apenas um comando por vez.
-     */
+    
     public String enviarComando(String comando) {
         if (!conectado) {
             return null;
